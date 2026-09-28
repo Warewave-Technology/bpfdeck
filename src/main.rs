@@ -1,4 +1,5 @@
 mod app;
+mod discovery;
 mod ui;
 
 use std::time::Duration;
