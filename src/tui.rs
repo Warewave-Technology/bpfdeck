@@ -32,7 +32,7 @@ const TICK: Duration = Duration::from_millis(250);
 /// from starving the screen and the keyboard.
 const FRAME_BUDGET: Duration = Duration::from_millis(30);
 
-pub async fn run(input: String, bpftrace_path: PathBuf) -> Result<()> {
+pub async fn run(input: String, bpftrace_path: PathBuf, export_dir: PathBuf) -> Result<()> {
     let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
     // Keys and signals get their own channel so they are never stuck behind run output.
     let (input_tx, mut input_rx) = mpsc::channel(CHANNEL_CAPACITY);
@@ -53,6 +53,7 @@ pub async fn run(input: String, bpftrace_path: PathBuf) -> Result<()> {
         validator: Arc::new(OnceLock::new()),
         input_gate,
         run: None,
+        export_dir,
     };
     let result = event_loop(&mut terminal, &mut app, &mut exec, &mut input_rx, &mut rx).await;
     // Dropping the handle kills a still running bpftrace (its whole process group).
@@ -149,7 +150,62 @@ struct Executor {
     validator: Arc<OnceLock<Arc<Validator>>>,
     input_gate: Arc<Mutex<()>>,
     /// The current run (D-010). Replacing or dropping it kills a live process group.
-    run: Option<(u64, RunHandle)>,
+    run: Option<ActiveRun>,
+    /// Where `w` writes exports (`--export-dir`).
+    export_dir: PathBuf,
+}
+
+struct ActiveRun {
+    id: u64,
+    // Field order matters: the handle (kill) drops before the spool file is removed.
+    handle: RunHandle,
+    spool: Option<PathBuf>,
+}
+
+impl Drop for ActiveRun {
+    fn drop(&mut self) {
+        if let Some(spool) = &self.spool {
+            let _ = std::fs::remove_file(spool);
+        }
+    }
+}
+
+/// `<cache>/bpfdeck/runs/run-<pid>-<id>.ndjson` (temp dir as a fallback).
+fn spool_path(run_id: u64) -> Option<PathBuf> {
+    let dir = source::default_cache_root()
+        .map(|c| c.join("runs"))
+        .unwrap_or_else(|_| std::env::temp_dir());
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join(format!("run-{}-{run_id}.ndjson", std::process::id())))
+}
+
+/// Write `<stem>.txt` and, when a spool exists, `<stem>.ndjson` into `dir`.
+fn export_files(
+    dir: &Path,
+    stem: &str,
+    mut text: String,
+    spool: Option<&Path>,
+    truncated: bool,
+) -> Result<Vec<PathBuf>> {
+    let dir = std::fs::canonicalize(dir).with_context(|| format!("export dir {}", dir.display()))?;
+    let mut written = Vec::new();
+    if let Some(spool) = spool.filter(|s| s.exists()) {
+        let ndjson = dir.join(format!("{stem}.ndjson"));
+        std::fs::copy(spool, &ndjson).with_context(|| format!("writing {}", ndjson.display()))?;
+        if truncated {
+            text.push_str(&format!(
+                "\nnote: the raw NDJSON copy stopped at {} MiB; later output is only in this text\n",
+                runner::SPOOL_CAP / 1024 / 1024
+            ));
+        }
+        written.push(ndjson);
+    } else {
+        text.push_str("\nnote: no raw NDJSON copy was recorded for this run\n");
+    }
+    let txt = dir.join(format!("{stem}.txt"));
+    std::fs::write(&txt, text).with_context(|| format!("writing {}", txt.display()))?;
+    written.insert(0, txt);
+    Ok(written)
 }
 
 impl Executor {
@@ -212,11 +268,28 @@ impl Executor {
             }
             Cmd::StartRun { run_id, argv } => self.start_run(run_id, &argv),
             Cmd::StopRun { run_id } => {
-                if let Some((id, handle)) = &mut self.run
-                    && *id == run_id
-                {
-                    handle.stop();
+                if let Some(run) = self.run.as_mut().filter(|r| r.id == run_id) {
+                    run.handle.stop();
                 }
+            }
+            Cmd::ExportRun {
+                run_id,
+                script_id,
+                text,
+            } => {
+                let active = self.run.as_ref().filter(|r| r.id == run_id);
+                let spool = active.and_then(|r| r.spool.clone());
+                let truncated = active.is_some_and(|r| r.handle.spool_truncated());
+                let (tx, dir) = (self.tx.clone(), self.export_dir.clone());
+                tokio::task::spawn_blocking(move || {
+                    let secs = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_secs());
+                    let stem = crate::model::export::file_stem(&script_id, secs);
+                    let result = export_files(&dir, &stem, text, spool.as_deref(), truncated)
+                        .map_err(|e| format!("{e:#}"));
+                    let _ = tx.blocking_send(Msg::Exported(result));
+                });
             }
             Cmd::OpenEditor { id, path, copy } => {
                 let result = tokio::task::block_in_place(|| self.edit(&path, copy, terminal));
@@ -236,8 +309,15 @@ impl Executor {
     /// until it exits.
     fn start_run(&mut self, run_id: u64, argv: &[std::ffi::OsString]) {
         let tx = self.tx.clone();
+        // The previous run is over (the app allows one at a time): drop it and its spool.
+        self.run = None;
         let (events_tx, events) = mpsc::channel(runner::CHANNEL_CAPACITY);
-        let handle = match runner::spawn(argv, events_tx, Escalation::default()) {
+        let spool_file = spool_path(run_id);
+        let spool = spool_file.clone().map(|path| runner::Spool {
+            path,
+            cap: runner::SPOOL_CAP,
+        });
+        let handle = match runner::spawn(argv, events_tx, Escalation::default(), spool.as_ref()) {
             Ok(handle) => handle,
             Err(e) => {
                 let program = argv
@@ -251,7 +331,11 @@ impl Executor {
                 return;
             }
         };
-        self.run = Some((run_id, handle));
+        self.run = Some(ActiveRun {
+            id: run_id,
+            handle,
+            spool: spool_file,
+        });
         tokio::spawn(forward_run(run_id, events, tx, TICK));
     }
 
@@ -369,6 +453,40 @@ mod tests {
 
     /// A printf/map flood against a deliberately slow consumer: nothing is lost silently,
     /// snapshots collapse, and the exit (after the last snapshot) always arrives.
+    #[test]
+    fn export_writes_text_and_raw_copy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let spool = dir.path().join("spool.ndjson");
+        std::fs::write(&spool, "{\"type\": \"printf\", \"data\": \"x\"}\n").expect("spool");
+        let paths =
+            export_files(dir.path(), "bpfdeck-x-1", "report\n".into(), Some(&spool), false).expect("export");
+        assert_eq!(paths.len(), 2);
+        assert!(paths[0].ends_with("bpfdeck-x-1.txt") && paths[1].ends_with("bpfdeck-x-1.ndjson"));
+        assert_eq!(std::fs::read_to_string(&paths[0]).expect("txt"), "report\n");
+        assert_eq!(
+            std::fs::read(&paths[1]).expect("ndjson"),
+            std::fs::read(&spool).expect("spool")
+        );
+
+        let paths =
+            export_files(dir.path(), "bpfdeck-x-2", "report\n".into(), Some(&spool), true).expect("export");
+        assert!(
+            std::fs::read_to_string(&paths[0])
+                .expect("txt")
+                .contains("stopped at 256 MiB")
+        );
+
+        let paths = export_files(dir.path(), "bpfdeck-x-3", "report\n".into(), None, false).expect("export");
+        assert_eq!(paths.len(), 1);
+        assert!(
+            std::fs::read_to_string(&paths[0])
+                .expect("txt")
+                .contains("no raw NDJSON copy")
+        );
+
+        assert!(export_files(&dir.path().join("missing"), "x", String::new(), None, false).is_err());
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn flood_is_coalesced_and_accounted_for() {
         const LINES: u64 = 100_000;
@@ -387,7 +505,7 @@ mod tests {
         };
         let argv = command::run_argv(&fake(), &args).expect("argv");
         let (events_tx, events) = mpsc::channel(runner::CHANNEL_CAPACITY);
-        let _handle = runner::spawn(&argv, events_tx, Escalation::default()).expect("spawn");
+        let _handle = runner::spawn(&argv, events_tx, Escalation::default(), None).expect("spawn");
         let (tx, mut rx) = mpsc::channel(4);
         tokio::spawn(forward_run(1, events, tx, Duration::from_millis(50)));
 

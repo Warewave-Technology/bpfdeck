@@ -1,0 +1,66 @@
+---
+source: src/model/export.rs
+assertion_line: 178
+expression: "render_text(&run, Some(\"raw NDJSON truncated at 256 MiB\"))"
+---
+bpfdeck run export
+script:   vfs_latency_demo.bt
+command:  bpftrace -f json -B line -- /s/vfs_latency_demo.bt
+state:    exited(0)
+elapsed:  00:01:15
+probes:   3   errors: 1   dropped: 0
+note:     raw NDJSON truncated at 256 MiB
+
+@syscalls[node]: 290
+@syscalls[sshd]: 55
+@syscalls[curl]: 7
+@syscalls[bash]: 3
+
+@usecs:
+[0]                    2 |                                                    |
+[1]                    0 |                                                    |
+[2, 4)                 5 |@                                                   |
+[4, 8)                19 |@@@@                                                |
+[8, 16)               64 |@@@@@@@@@@@@@@@                                     |
+[16, 32)             210 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[32, 64)              95 |@@@@@@@@@@@@@@@@@@@@@@@                             |
+[64, 128)             11 |@@                                                  |
+[128, 256)             1 |                                                    |
+
+@[bpftrace]:
+[2, 4)                 1 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+
+@[curl]:
+(..., 0)               1 |@@@@@@@@@@@@@@@@@@@@@@@@@@                          |
+[0]                    1 |@@@@@@@@@@@@@@@@@@@@@@@@@@                          |
+[1]                    0 |                                                    |
+[2, 4)                 0 |                                                    |
+[4, 8)                 0 |                                                    |
+[8, 16)                0 |                                                    |
+[16, 32)               0 |                                                    |
+[32, 64)               0 |                                                    |
+[64, 128)              0 |                                                    |
+[128, 256)             0 |                                                    |
+[256, 512)             1 |@@@@@@@@@@@@@@@@@@@@@@@@@@                          |
+[512, 1K)              0 |                                                    |
+[1K, 2K)               2 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+
+@stats: count / average / total
+  2  6  12
+
+@a:
+  1970-01-01 00:00:00.500000000  9
+  1970-01-01 00:00:00.600000000  9
+  1970-01-01 00:00:00.700000000  9
+  1970-01-01 00:00:00.800000000  9
+  1970-01-01 00:00:00.900000000  9
+
+@x: 42
+
+--- log (6 lines) ---
+$ bpftrace -f json -B line -- /s/vfs_latency_demo.bt
+attached 3 probes
+Tracing block device I/O... Hit Ctrl-C to end.
+WARNING: something
+stopping: SIGINT sent, waiting for END and the final map dump…
+exited(0)

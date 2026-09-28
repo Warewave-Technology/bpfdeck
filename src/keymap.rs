@@ -82,6 +82,7 @@ pub enum Action {
     PrevKey,
     NextKey,
     ToggleSort,
+    Export,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -194,6 +195,7 @@ pub const BINDINGS: &[Binding] = &[
     bind(Run, &[ch('[')], "[", Action::PrevKey, "previous key (keyed hist)", None),
     bind(Run, &[ch(']')], "]", Action::NextKey, "next key (keyed hist)", None),
     bind(Run, &[ch('s')], "s", Action::ToggleSort, "table: sort by key/value", None),
+    bind(Run, &[ch('w')], "w", Action::Export, "write run to files (.txt + .ndjson)", None),
     bind(Run, &[key(Esc)], "Esc", Action::Close, "back to list, run continues", Some("back")),
     bind(Run, &[ch('?')], "?", Action::Help, "help", Some("help")),
 

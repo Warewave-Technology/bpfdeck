@@ -6,8 +6,10 @@
 //! dump always arrives before it.
 
 use std::ffi::OsString;
-use std::io;
+use std::fs::File;
+use std::io::{self, BufWriter, Write};
 use std::os::unix::process::ExitStatusExt;
+use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -64,11 +66,43 @@ impl Default for Escalation {
     }
 }
 
+/// Keep a copy of bpftrace's raw stdout in a file, for exporting a run (M6). Bounded:
+/// past `cap` bytes nothing more is written and the handle reports truncation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Spool {
+    pub path: PathBuf,
+    pub cap: u64,
+}
+
+pub const SPOOL_CAP: u64 = 256 * 1024 * 1024;
+
+struct SpoolWriter {
+    out: BufWriter<File>,
+    written: u64,
+    cap: u64,
+    truncated: Arc<AtomicBool>,
+}
+
+impl SpoolWriter {
+    fn write(&mut self, raw: &[u8]) {
+        if self.truncated.load(Ordering::Relaxed) {
+            return;
+        }
+        let len = raw.len() as u64;
+        if self.written + len > self.cap || self.out.write_all(raw).is_err() {
+            self.truncated.store(true, Ordering::Relaxed);
+            return;
+        }
+        self.written += len;
+    }
+}
+
 /// Handle to a running bpftrace. Dropping it kills the process group.
 pub struct RunHandle {
     pgid: u32,
     stop: Option<oneshot::Sender<()>>,
     finished: Arc<AtomicBool>,
+    spool_truncated: Arc<AtomicBool>,
 }
 
 impl RunHandle {
@@ -86,6 +120,11 @@ impl RunHandle {
     pub fn is_finished(&self) -> bool {
         self.finished.load(Ordering::Acquire)
     }
+
+    /// The spool hit its cap (or could not be written): the raw copy is incomplete.
+    pub fn spool_truncated(&self) -> bool {
+        self.spool_truncated.load(Ordering::Relaxed)
+    }
 }
 
 impl Drop for RunHandle {
@@ -96,10 +135,16 @@ impl Drop for RunHandle {
     }
 }
 
-/// Spawn `argv` (see `command::run_argv`) and stream events into `tx`.
+/// Spawn `argv` (see `command::run_argv`) and stream events into `tx`. With `spool`, raw
+/// stdout is also copied to that file (a spool that can't be created is just skipped).
 /// Must be called inside a tokio runtime. The child inherits bpfdeck's *ignored* signals,
 /// so install signal handlers (which reset to default on exec) before spawning.
-pub fn spawn(argv: &[OsString], tx: mpsc::Sender<RunEvent>, escalation: Escalation) -> io::Result<RunHandle> {
+pub fn spawn(
+    argv: &[OsString],
+    tx: mpsc::Sender<RunEvent>,
+    escalation: Escalation,
+    spool: Option<&Spool>,
+) -> io::Result<RunHandle> {
     let (program, args) = argv
         .split_first()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty argv"))?;
@@ -115,9 +160,19 @@ pub fn spawn(argv: &[OsString], tx: mpsc::Sender<RunEvent>, escalation: Escalati
         .id()
         .ok_or_else(|| io::Error::other("child exited before its pid was read"))?;
 
+    let spool_truncated = Arc::new(AtomicBool::new(false));
+    let spool = spool.and_then(|s| {
+        let file = File::create(&s.path).ok()?;
+        Some(SpoolWriter {
+            out: BufWriter::new(file),
+            written: 0,
+            cap: s.cap,
+            truncated: spool_truncated.clone(),
+        })
+    });
     let readers = [
         child.stdout.take().map(|out| {
-            tokio::spawn(read_lines(out, tx.clone(), |line| {
+            tokio::spawn(read_lines(out, tx.clone(), spool, |line| {
                 json::parse_line(&line)
                     .into_iter()
                     .map(RunEvent::Output)
@@ -125,7 +180,7 @@ pub fn spawn(argv: &[OsString], tx: mpsc::Sender<RunEvent>, escalation: Escalati
             }))
         }),
         child.stderr.take().map(|err| {
-            tokio::spawn(read_lines(err, tx.clone(), |line| {
+            tokio::spawn(read_lines(err, tx.clone(), None, |line| {
                 if line.trim().is_empty() {
                     Vec::new()
                 } else {
@@ -150,6 +205,7 @@ pub fn spawn(argv: &[OsString], tx: mpsc::Sender<RunEvent>, escalation: Escalati
         pgid,
         stop: Some(stop_tx),
         finished,
+        spool_truncated,
     })
 }
 
@@ -230,6 +286,7 @@ fn exit_of(status: io::Result<ExitStatus>, forced: Option<Signal>) -> RunExit {
 async fn read_lines(
     stream: impl AsyncRead + Unpin,
     tx: mpsc::Sender<RunEvent>,
+    mut spool: Option<SpoolWriter>,
     f: impl Fn(String) -> Vec<RunEvent>,
 ) {
     let mut reader = BufReader::new(stream);
@@ -239,6 +296,14 @@ async fn read_lines(
         match reader.read_until(b'\n', &mut buf).await {
             Ok(0) | Err(_) => break,
             Ok(_) => {
+                if let Some(spool) = &mut spool {
+                    spool.write(&buf);
+                    // Flush whenever we caught up with the pipe: cheap under a flood,
+                    // and an export mid-run then has everything read so far.
+                    if reader.buffer().is_empty() {
+                        let _ = spool.out.flush();
+                    }
+                }
                 let line = String::from_utf8_lossy(&buf);
                 let line = line.trim_end_matches(['\n', '\r']).to_string();
                 for event in f(line) {
@@ -246,6 +311,9 @@ async fn read_lines(
                 }
             }
         }
+    }
+    if let Some(spool) = &mut spool {
+        let _ = spool.out.flush();
     }
 }
 
@@ -321,7 +389,7 @@ mod tests {
             "// fake: replay=session_mixed.ndjson\n// fake: stderr=WARNING: fake\nBEGIN {}\n",
         );
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let mut handle = spawn(&argv(&s), tx, FAST).expect("spawn");
+        let mut handle = spawn(&argv(&s), tx, FAST, None).expect("spawn");
 
         // 5 stdout messages + 1 stderr line.
         let first = wait_for(&mut rx, 6).await;
@@ -364,7 +432,7 @@ mod tests {
             "// fake: replay=printf.ndjson\n// fake: exit=3\nBEGIN {}\n",
         );
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let _handle = spawn(&argv(&s), tx, FAST).expect("spawn");
+        let _handle = spawn(&argv(&s), tx, FAST, None).expect("spawn");
         let (events, exit) = collect(&mut rx).await;
         assert_eq!(events.len(), 1, "{events:?}");
         assert_eq!(exit.code, Some(3));
@@ -384,7 +452,7 @@ mod tests {
                 &format!("{directives}// fake: replay=printf.ndjson\nBEGIN {{}}\n"),
             );
             let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-            let mut handle = spawn(&argv(&s), tx, FAST).expect("spawn");
+            let mut handle = spawn(&argv(&s), tx, FAST, None).expect("spawn");
             wait_for(&mut rx, 1).await; // traps are installed before the replay
             handle.stop();
             let (_, exit) = collect(&mut rx).await;
@@ -404,7 +472,7 @@ mod tests {
             "// fake: child=1\n// fake: replay=printf.ndjson\nBEGIN {}\n",
         );
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let mut handle = spawn(&argv(&s), tx, FAST).expect("spawn");
+        let mut handle = spawn(&argv(&s), tx, FAST, None).expect("spawn");
         let pgid = handle.pgid();
         wait_for(&mut rx, 1).await;
         handle.stop();
@@ -418,7 +486,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let s = script(&dir, "t.bt", "// fake: replay=printf.ndjson\nBEGIN {}\n");
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let handle = spawn(&argv(&s), tx, FAST).expect("spawn");
+        let handle = spawn(&argv(&s), tx, FAST, None).expect("spawn");
         wait_for(&mut rx, 1).await;
         drop(handle);
         let (_, exit) = collect(&mut rx).await;
@@ -453,7 +521,8 @@ mod tests {
             allow_unsafe: false,
         };
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let _handle = spawn(&command::run_argv(&fake(), &args).expect("argv"), tx, FAST).expect("spawn");
+        let _handle =
+            spawn(&command::run_argv(&fake(), &args).expect("argv"), tx, FAST, None).expect("spawn");
         let (_, exit) = collect(&mut rx).await;
         assert!(exit.code == Some(0), "{exit:?}");
         let logged = std::fs::read_to_string(&log).expect("log");
@@ -473,9 +542,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn spool_keeps_raw_stdout_and_respects_its_cap() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = script(
+            &dir,
+            "t.bt",
+            "// fake: replay=session_mixed.ndjson\n// fake: delay=0\n// fake: exit=0\nBEGIN {}\n",
+        );
+        let fixture = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/json/session_mixed.ndjson"
+        ))
+        .expect("fixture");
+
+        let spool = Spool {
+            path: dir.path().join("full.ndjson"),
+            cap: SPOOL_CAP,
+        };
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let handle = spawn(&argv(&s), tx, FAST, Some(&spool)).expect("spawn");
+        collect(&mut rx).await;
+        assert_eq!(
+            std::fs::read_to_string(&spool.path).expect("spool"),
+            fixture,
+            "byte for byte"
+        );
+        assert!(!handle.spool_truncated());
+
+        // A cap smaller than the output: whole lines up to the cap, then truncated.
+        let first_two: usize = fixture.lines().take(2).map(|l| l.len() + 1).sum();
+        let spool = Spool {
+            path: dir.path().join("capped.ndjson"),
+            cap: first_two as u64 + 5,
+        };
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let handle = spawn(&argv(&s), tx, FAST, Some(&spool)).expect("spawn");
+        let (events, _) = collect(&mut rx).await;
+        assert_eq!(
+            std::fs::read_to_string(&spool.path).expect("spool").len(),
+            first_two
+        );
+        assert!(handle.spool_truncated());
+        assert_eq!(events.len(), 5, "the run itself is unaffected by the cap");
+
+        // An unwritable spool path is skipped, the run still works.
+        let spool = Spool {
+            path: dir.path().join("missing/dir/x.ndjson"),
+            cap: SPOOL_CAP,
+        };
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let _handle = spawn(&argv(&s), tx, FAST, Some(&spool)).expect("spawn");
+        let (_, exit) = collect(&mut rx).await;
+        assert_eq!(exit.code, Some(0));
+    }
+
+    #[tokio::test]
     async fn spawn_failure_is_an_error() {
         let (tx, _rx) = mpsc::channel(CHANNEL_CAPACITY);
-        assert!(spawn(&["/definitely/not/bpftrace".into()], tx.clone(), FAST).is_err());
-        assert!(spawn(&[], tx, FAST).is_err());
+        assert!(spawn(&["/definitely/not/bpftrace".into()], tx.clone(), FAST, None).is_err());
+        assert!(spawn(&[], tx, FAST, None).is_err());
     }
 }

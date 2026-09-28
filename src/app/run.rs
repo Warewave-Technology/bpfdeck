@@ -12,6 +12,7 @@ use crate::bpftrace::command::{self, CommandError, NamedArg, RunArgs};
 use crate::bpftrace::runner::{RunEvent, RunExit};
 use crate::bpftrace::validate::Verdict;
 use crate::keymap::Action;
+use crate::model::export;
 use crate::model::form::ParamForm;
 use crate::model::run_state::{ExitInfo, Run};
 use crate::msg::Cmd;
@@ -333,6 +334,17 @@ impl App {
             }
             Action::Bottom => self.log_view.follow = true,
             Action::ToggleFullWidth => self.full_width = !self.full_width,
+            Action::Export => {
+                if let Some(run) = &self.run {
+                    let cmd = Cmd::ExportRun {
+                        run_id: run.id,
+                        script_id: run.script_id.clone(),
+                        text: export::render_text(run, None),
+                    };
+                    self.notify(Level::Info, "exporting…".into());
+                    return vec![cmd];
+                }
+            }
             Action::NextTab | Action::PrevTab => {
                 let delta = if action == Action::NextTab { 1 } else { -1 };
                 if let Some(run) = &mut self.run {
@@ -840,5 +852,40 @@ mod tests {
         );
         app.update(key(KeyCode::BackTab));
         assert_eq!(focused(&app).as_deref(), Some("@m"));
+    }
+
+    #[test]
+    fn export_key_and_result() {
+        let mut app = app();
+        assert!(app.update(ch('w')).is_empty(), "w means nothing in the browser");
+        select(&mut app, "syscount_demo.bt");
+        app.update(key(KeyCode::Enter));
+        let (run_id, _) = start_cmd(&app.update(key(KeyCode::Enter)));
+        match app.update(ch('w')).as_slice() {
+            [
+                Cmd::ExportRun {
+                    run_id: id,
+                    script_id,
+                    text,
+                },
+            ] => {
+                assert_eq!((*id, script_id.as_str()), (run_id, "syscount_demo.bt"));
+                assert!(
+                    text.starts_with("bpfdeck run export\nscript:   syscount_demo.bt\n"),
+                    "{text}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        app.update(Msg::Exported(Ok(vec![
+            "/tmp/a.txt".into(),
+            "/tmp/a.ndjson".into(),
+        ])));
+        assert_eq!(
+            app.notice.as_ref().map(|n| n.text.as_str()),
+            Some("exported: /tmp/a.txt, /tmp/a.ndjson")
+        );
+        app.update(Msg::Exported(Err("export dir /nope: No such file".into())));
+        assert_eq!(app.notice.as_ref().map(|n| n.level), Some(Level::Error));
     }
 }

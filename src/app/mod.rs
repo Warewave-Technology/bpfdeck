@@ -238,6 +238,16 @@ impl App {
                 self.on_run_batch(run_id, at, batch);
                 Vec::new()
             }
+            Msg::Exported(result) => {
+                match result {
+                    Ok(paths) => {
+                        let names: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+                        self.notify(Level::Info, format!("exported: {}", names.join(", ")));
+                    }
+                    Err(e) => self.notify(Level::Error, format!("export failed: {e}")),
+                }
+                Vec::new()
+            }
             Msg::Tick(now) => {
                 if let Some(run) = &mut self.run {
                     run.tick(now);

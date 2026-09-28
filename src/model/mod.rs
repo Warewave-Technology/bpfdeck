@@ -1,6 +1,7 @@
 //! Pure view-models derived from run events and user input. No ratatui, no tokio.
 
 pub mod describe;
+pub mod export;
 pub mod form;
 pub mod hist;
 pub mod log;

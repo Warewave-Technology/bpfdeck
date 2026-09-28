@@ -151,7 +151,7 @@ pub fn run(input: &str, bpftrace_path: &Path, id: &str, params: &[String]) -> Re
         let mut term = signal(SignalKind::terminate())?;
         let mut hup = signal(SignalKind::hangup())?;
         let (tx, mut rx) = mpsc::channel(runner::CHANNEL_CAPACITY);
-        let mut handle = runner::spawn(&argv, tx, Escalation::default())
+        let mut handle = runner::spawn(&argv, tx, Escalation::default(), None)
             .with_context(|| format!("starting {}", bpftrace_path.display()))?;
         eprintln!(
             "started, process group {}; Ctrl-C stops (SIGINT to bpftrace)",

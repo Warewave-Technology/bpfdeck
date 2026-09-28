@@ -58,6 +58,8 @@ pub enum Msg {
     },
     /// 250 ms heartbeat while a run is active (elapsed time).
     Tick(Instant),
+    /// Result of `Cmd::ExportRun`: the files written.
+    Exported(Result<Vec<PathBuf>, String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,5 +92,11 @@ pub enum Cmd {
     /// Graceful stop: SIGINT, then SIGTERM/SIGKILL on timeouts.
     StopRun {
         run_id: u64,
+    },
+    /// Write `text` (see `model::export`) and a copy of the run's raw NDJSON to files.
+    ExportRun {
+        run_id: u64,
+        script_id: String,
+        text: String,
     },
 }
