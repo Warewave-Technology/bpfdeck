@@ -84,6 +84,34 @@ pub fn trimmed(buckets: &[Bucket]) -> &[Bucket] {
     }
 }
 
+/// A displayed histogram row: a bucket (by index) or a collapsed run of empty buckets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Row {
+    Bucket(usize),
+    Gap(usize),
+}
+
+/// Runs of at least `min_gap` empty buckets collapse into one `Gap` row, so outliers far
+/// out (common with real data) stay visible in a short panel. Shorter runs stay as-is.
+pub fn rows(buckets: &[Bucket], min_gap: usize) -> Vec<Row> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < buckets.len() {
+        let run = buckets[i..].iter().take_while(|b| b.count == 0).count();
+        if run >= min_gap.max(2) {
+            out.push(Row::Gap(run));
+            i += run;
+        } else if run > 0 {
+            out.extend((i..i + run).map(Row::Bucket));
+            i += run;
+        } else {
+            out.push(Row::Bucket(i));
+            i += 1;
+        }
+    }
+    out
+}
+
 /// A bar of `count / max` × `width` cells, in eighths of a cell. Non-zero counts always
 /// get at least one eighth so they are visible.
 pub fn bar(count: u64, max: u64, width: usize) -> String {
@@ -190,6 +218,28 @@ mod tests {
         ];
         assert_eq!(trimmed(&buckets).len(), 3);
         assert!(trimmed(&[b(Some(0), Some(0), 0)]).is_empty());
+    }
+
+    #[test]
+    fn empty_runs_collapse() {
+        let bs = |counts: &[u64]| -> Vec<Bucket> {
+            counts
+                .iter()
+                .enumerate()
+                .map(|(i, &c)| b(Some(i as i64), Some(i as i64), c))
+                .collect()
+        };
+        use Row::{Bucket as B, Gap as G};
+        assert_eq!(
+            rows(&bs(&[1, 0, 0, 1]), 3),
+            vec![B(0), B(1), B(2), B(3)],
+            "short gaps stay"
+        );
+        assert_eq!(
+            rows(&bs(&[1, 0, 0, 0, 0, 2, 0, 3]), 3),
+            vec![B(0), G(4), B(5), B(6), B(7)]
+        );
+        assert_eq!(rows(&bs(&[]), 3), vec![]);
     }
 
     #[test]

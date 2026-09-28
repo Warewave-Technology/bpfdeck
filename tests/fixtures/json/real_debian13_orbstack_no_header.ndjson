@@ -1,0 +1,15 @@
+{"type": "attached_probes", "data": {"probes": 1}}
+{"type": "printf", "data": "cat\n"}
+{"type": "printf", "data": "true\n"}
+{"type": "printf", "data": "sleep\n"}
+{"type": "printf", "data": "cat\n"}
+{"type": "printf", "data": "true\n"}
+{"type": "printf", "data": "sleep\n"}
+{"type": "printf", "data": "cat\n"}
+{"type": "printf", "data": "true\n"}
+{"type": "printf", "data": "sleep\n"}
+{"type": "printf", "data": "cat\n"}
+{"type": "printf", "data": "true\n"}
+{"type": "printf", "data": "sleep\n"}
+
+

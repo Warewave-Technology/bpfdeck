@@ -3,6 +3,8 @@
 use std::collections::VecDeque;
 
 pub const DEFAULT_CAPACITY: usize = 10_000;
+/// How far back an error/raw line looks for an identical line to count as a repeat.
+const REPEAT_LOOKBACK: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogKind {
@@ -22,8 +24,21 @@ pub struct LogLine {
     pub seq: u64,
     pub kind: LogKind,
     pub text: String,
+    /// How many identical consecutive error/raw lines this line stands for (≥ 1).
+    pub repeat: u64,
     /// Output text not terminated by `\n` yet: the next output continues it.
     open: bool,
+}
+
+impl LogLine {
+    /// The text with a `(×N)` suffix for collapsed repeats.
+    pub fn display(&self) -> String {
+        if self.repeat > 1 {
+            format!("{} (×{})", self.text, self.repeat)
+        } else {
+            self.text.clone()
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +63,22 @@ impl LogBuffer {
     pub fn push_line(&mut self, kind: LogKind, text: &str) {
         self.close_open();
         for line in text.trim_end_matches('\n').split('\n') {
+            // A helper error in a hot probe repeats thousands of times a second (often
+            // alternating between a few call sites); counting repeats within a short run of
+            // error lines keeps the rest of the log readable. Program output is never
+            // collapsed or skipped over: identical printf lines are usually distinct events.
+            if matches!(kind, LogKind::Error | LogKind::Raw)
+                && let Some(same) = self
+                    .lines
+                    .iter_mut()
+                    .rev()
+                    .take(REPEAT_LOOKBACK)
+                    .take_while(|l| matches!(l.kind, LogKind::Error | LogKind::Raw))
+                    .find(|l| l.kind == kind && l.text == line)
+            {
+                same.repeat += 1;
+                continue;
+            }
             self.push(kind, line, false);
         }
     }
@@ -89,6 +120,7 @@ impl LogBuffer {
             seq: self.next_seq,
             kind,
             text: text.to_string(),
+            repeat: 1,
             open,
         });
         self.next_seq += 1;
@@ -179,6 +211,52 @@ mod tests {
         assert_eq!(log.evicted(), 2);
         let seqs: Vec<u64> = log.matching("").iter().map(|l| l.seq).collect();
         assert_eq!(seqs, vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn identical_errors_collapse_but_output_does_not() {
+        let mut log = LogBuffer::new(100);
+        for _ in 0..3 {
+            log.push_line(
+                LogKind::Error,
+                "get_ns_current_pid_tgid: Invalid argument (line 3)",
+            );
+        }
+        // Alternating call sites collapse too…
+        for _ in 0..3 {
+            log.push_line(
+                LogKind::Error,
+                "get_ns_current_pid_tgid: Invalid argument (line 2)",
+            );
+            log.push_line(
+                LogKind::Error,
+                "get_ns_current_pid_tgid: Invalid argument (line 3)",
+            );
+        }
+        // …but never across program output.
+        log.push_text(LogKind::Output, "event\n");
+        log.push_line(
+            LogKind::Error,
+            "get_ns_current_pid_tgid: Invalid argument (line 3)",
+        );
+        for _ in 0..2 {
+            log.push_text(LogKind::Output, "same\n");
+            log.push_line(LogKind::System, "sys");
+        }
+        let shown: Vec<String> = log.matching("").iter().map(|l| l.display()).collect();
+        assert_eq!(
+            shown,
+            vec![
+                "get_ns_current_pid_tgid: Invalid argument (line 3) (×6)",
+                "get_ns_current_pid_tgid: Invalid argument (line 2) (×3)",
+                "event",
+                "get_ns_current_pid_tgid: Invalid argument (line 3)",
+                "same",
+                "sys",
+                "same",
+                "sys",
+            ]
+        );
     }
 
     #[test]

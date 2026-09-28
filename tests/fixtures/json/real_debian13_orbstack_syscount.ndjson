@@ -1,0 +1,9 @@
+{"type": "attached_probes", "data": {"probes": 2}}
+{"type": "helper_error", "msg": "File exists", "helper": "map_update_elem", "retcode": -17, "line": 9, "col": 21}
+{"type": "map", "data": {"@syscalls": {"proc-1": 545, "proc-2": 680, "proc-3": 749, "proc-4": 852, "proc-5": 1745, "proc-6": 1986, "true": 3749, "sleep": 4547, "cat": 5753, "bash": 11133}}}
+{"type": "map", "data": {"@syscalls": {"bpftrace": 67, "proc-7": 99, "proc-8": 166, "proc-9": 171, "proc-10": 554, "proc-4": 870, "true": 3547, "sleep": 4305, "cat": 5437, "bash": 10510}}}
+{"type": "map", "data": {"@syscalls": {"proc-4": 1238, "proc-2": 2133, "proc-11": 2563, "true": 3441, "proc-3": 4015, "sleep": 4180, "cat": 5320, "proc-5": 9858, "bash": 10240, "proc-6": 10995}}}
+{"type": "helper_error", "msg": "File exists", "helper": "map_update_elem", "retcode": -17, "line": 9, "col": 21}
+
+
+{"type": "map", "data": {"@syscalls": {"proc-12": 2, "proc-13": 2, "proc-14": 2, "proc-15": 2, "proc-2": 7, "proc-16": 8, "proc-11": 18, "proc-3": 18, "proc-17": 19, "proc-7": 37, "bpftrace": 39, "cat": 43, "true": 56, "proc-10": 68, "sleep": 71, "bash": 129, "proc-9": 130, "proc-18": 178, "proc-4": 429}}}

@@ -50,6 +50,8 @@ impl ExitInfo {
 pub struct Run {
     pub id: u64,
     pub script_id: String,
+    /// The command line as shown in the confirmation dialog.
+    pub command: String,
     pub phase: Phase,
     pub exit: Option<ExitInfo>,
     pub failure: Option<String>,
@@ -73,6 +75,7 @@ impl Run {
         Self {
             id,
             script_id: script_id.to_string(),
+            command: command.to_string(),
             phase: Phase::Starting,
             exit: None,
             failure: None,
@@ -285,6 +288,30 @@ mod tests {
         // Time stops once the run is over.
         run.tick(t0 + Duration::from_secs(60));
         assert_eq!(run.elapsed, Duration::from_secs(13));
+    }
+
+    /// Real bpftrace 0.23.2 output (docs/bpftrace-json.md checklist): no `count` in
+    /// attached_probes, blank lines before the exit dump, helper errors mid-stream.
+    #[test]
+    fn real_readlat_session() {
+        let t0 = Instant::now();
+        let mut run = Run::new(1, "readlat.bt", "bpftrace -f json -B line -- readlat.bt");
+        run.started(t0);
+        let text = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/json/real_debian13_orbstack_readlat.ndjson"
+        ))
+        .expect("fixture");
+        feed(&mut run, &text);
+        assert_eq!(run.attached_probes, Some(3));
+        assert_eq!(run.errors, 3);
+        let hist = run
+            .panels
+            .list
+            .first()
+            .and_then(|p| p.selected_hist())
+            .expect("exit-time hist");
+        assert_eq!(hist.first().map(|b| b.count), Some(422));
     }
 
     #[test]

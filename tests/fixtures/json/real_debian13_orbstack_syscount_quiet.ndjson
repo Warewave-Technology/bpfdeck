@@ -1,0 +1,4 @@
+{"type": "map", "data": {"@syscalls": {"proc-2": 539, "proc-3": 749, "proc-4": 869, "proc-5": 1825, "proc-6": 1974, "proc-11": 2456, "true": 3468, "sleep": 4172, "cat": 5328, "bash": 10291}}}
+
+
+{"type": "map", "data": {"@syscalls": {"proc-19": 2, "proc-13": 2, "proc-15": 2, "proc-20": 4, "proc-21": 4, "proc-22": 4, "proc-12": 4, "proc-2": 14, "proc-23": 15, "proc-18": 15, "proc-16": 16, "bpftrace": 29, "proc-17": 34, "proc-11": 48, "proc-3": 90, "proc-7": 107, "proc-10": 194, "proc-9": 222, "proc-4": 882, "true": 3236, "sleep": 3941, "cat": 4975, "bash": 9634}}}

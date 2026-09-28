@@ -29,22 +29,34 @@ pub fn render(frame: &mut Frame, area: Rect, panel: &Panel) {
     let max = buckets.iter().map(|b| b.count).max().unwrap_or(0);
 
     let room = usize::from(area.height).saturating_sub(lines.len());
-    let truncated = buckets.len() > room;
+    // All buckets when they fit (bpftrace-like); otherwise collapse long empty runs so
+    // far-out outliers stay on screen.
+    let rows = if buckets.len() <= room {
+        hist::rows(buckets, usize::MAX)
+    } else {
+        hist::rows(buckets, 3)
+    };
+    let truncated = rows.len() > room;
     let shown = if truncated {
         room.saturating_sub(1)
     } else {
-        buckets.len()
+        rows.len()
     };
-    for (b, label) in buckets.iter().zip(&labels).take(shown) {
-        lines.push(Line::from(vec![
-            Span::styled(fit(label, label_w), Theme::label()),
-            Span::raw(format!(" {:>count_w$} ", b.count)),
-            Span::styled(hist::bar(b.count, max, bar_w), Theme::hist_bar()),
-        ]));
+    for row in rows.iter().take(shown) {
+        lines.push(match *row {
+            hist::Row::Bucket(i) => Line::from(vec![
+                Span::styled(fit(&labels[i], label_w), Theme::label()),
+                Span::raw(format!(" {:>count_w$} ", buckets[i].count)),
+                Span::styled(hist::bar(buckets[i].count, max, bar_w), Theme::hist_bar()),
+            ]),
+            hist::Row::Gap(n) => {
+                Line::styled(format!("{:>label_w$}  {n} empty buckets", "⋮"), Theme::muted())
+            }
+        });
     }
     if truncated {
         lines.push(Line::styled(
-            format!("… {} more buckets", buckets.len() - shown),
+            format!("… {} more rows", rows.len() - shown),
             Theme::muted(),
         ));
     }

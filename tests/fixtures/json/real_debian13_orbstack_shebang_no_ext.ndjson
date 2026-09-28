@@ -1,0 +1,4 @@
+{"type": "attached_probes", "data": {"probes": 1}}
+{"type": "printf", "data": "hi\n"}
+
+

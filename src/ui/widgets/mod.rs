@@ -98,6 +98,12 @@ mod tests {
     }
 
     #[test]
+    fn hist_real_readlat() {
+        let p = panels(&fixture("real_debian13_orbstack_readlat.ndjson"));
+        insta::assert_snapshot!(draw(&p.list[0], 70, 16));
+    }
+
+    #[test]
     fn lhist_with_overflow() {
         let p = panels(&fixture("lhist.ndjson"));
         insta::assert_snapshot!(draw(&p.list[0], 60, 14));

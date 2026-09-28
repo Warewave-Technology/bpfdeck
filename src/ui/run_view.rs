@@ -174,7 +174,7 @@ fn draw_log(frame: &mut Frame, area: Rect, app: &App, run: &Run) {
         .iter()
         .skip(start)
         .take(height)
-        .map(|l| Line::styled(l.text.replace('\t', "    "), kind_style(l.kind)))
+        .map(|l| Line::styled(l.display().replace('\t', "    "), kind_style(l.kind)))
         .collect();
     if shown.is_empty() && !view.filter.is_empty() {
         frame.render_widget(
