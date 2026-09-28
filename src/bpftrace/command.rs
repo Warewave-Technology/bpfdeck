@@ -107,6 +107,25 @@ pub fn help_argv(bpftrace: &Path) -> Vec<OsString> {
     vec![bpftrace.into(), "--help".into()]
 }
 
+/// The argv as a copy-pasteable command line, for display only (it is never handed to a
+/// shell): arguments with shell metacharacters are single-quoted.
+pub fn display(argv: &[OsString]) -> String {
+    argv.iter()
+        .map(|a| {
+            let a = a.to_string_lossy();
+            let plain = !a.is_empty()
+                && a.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-_./:=@%+,".contains(c));
+            if plain {
+                a.into_owned()
+            } else {
+                format!("'{}'", a.replace('\'', "'\\''"))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// getopt names as bpftrace scripts write them; `=` or whitespace would change meaning.
 fn is_valid_name(name: &str) -> bool {
     !name.is_empty()
@@ -223,6 +242,27 @@ mod tests {
             assert!(matches!(err, Err(CommandError::InvalidName(_))), "{bad:?}");
         }
         assert!(run(&[], &[named("max-depth_2", NamedValue::Flag(true))], false).is_ok());
+    }
+
+    #[test]
+    fn display_quotes_only_when_needed() {
+        let argv: Vec<OsString> = [
+            "/usr/bin/bpftrace",
+            "--",
+            "/s/a.bt",
+            "two words",
+            "it's",
+            "",
+            "--sep=a,b",
+            "$(x)",
+        ]
+        .iter()
+        .map(OsString::from)
+        .collect();
+        assert_eq!(
+            display(&argv),
+            r#"/usr/bin/bpftrace -- /s/a.bt 'two words' 'it'\''s' '' --sep=a,b '$(x)'"#
+        );
     }
 
     #[test]
