@@ -81,4 +81,6 @@ M1 done: `source/` (local + git, D-012), `discovery/` (walk, lexer, metadata), `
 M2 done except the manual real-host step: `bpftrace/` (json, command D-013, detect,
 runner, validate), `sys.rs`, fake bpftrace, headless `--list`/`--run`.
 M3 done: TUI browser (`tui.rs` loop/executor, `app/` reducer, `keymap.rs`, `ui/`).
-Next: **M4** (run flow); M2 manual real-host step still open (needs a Linux host).
+M4 done except the real-host test: run flow (form → confirm → run view, D-014), `model/`
+(run_state, log, form), executor StartRun/StopRun + 250 ms tick.
+Next: **M5** (panels). Open: real-host checks for M2 and M4 (need a Linux host).

@@ -62,3 +62,10 @@ as `--unsafe` or `-o /etc/passwd` would become a bpftrace option while running a
 So the argv is `bpftrace -f json -B line [--unsafe] -- <file> [positional…] [--name=v…]`
 (same for `--dry-run` and `-l -- <probe>`). bpftrace itself cannot tell a positional value
 starting with `--` from a named param, so the builder rejects such values. — accepted
+
+**D-014 — Parameters form before the run confirmation.** Resolves a contradiction in the
+spec (§4 said confirm → params, §5.2 wants the confirmation to show the exact command
+line *after* params). The form comes first; the confirmation then shows the final argv
+and is the single last gate (D-009's `--unsafe` toggle lives there). Named params left at
+their default are not passed, so the command line shows only what the user changed; a
+flag whose default is `true` that the user unticks is passed as `--name=false`. — accepted

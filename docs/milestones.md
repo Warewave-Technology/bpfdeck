@@ -51,12 +51,17 @@ shows up after the automatic rescan, `?` opens/closes help, `q` and SIGTERM both
 with the terminal restored and no leftover processes.
 
 ## M4 — Run: confirm, params, log
-- [ ] Confirmation modal with exact argv and probe list; unsafe toggle + banner
-- [ ] Params form from metadata (positional + getopt, bool checkboxes, defaults)
-- [ ] Run view header (state, elapsed, probes, error count, dropped count)
-- [ ] Event log panel: ring buffer, follow/pause, filter
-- [ ] Stop flow captures the exit-time dump
+- [x] Confirmation modal with exact argv and probe list; unsafe toggle + banner
+- [x] Params form from metadata (positional + getopt, bool checkboxes, defaults) (D-014: before the confirmation)
+- [x] Run view header (state, elapsed, probes, error count, dropped count)
+- [x] Event log panel: ring buffer, follow/pause, filter
+- [x] Stop flow captures the exit-time dump
 - [ ] Test with `vfs_latency_demo.bt` and `tcpconnect_demo.bt` on a real host
+
+Demo (tmux, fake bpftrace): Enter → confirmation → run; the log streams a replayed
+session, `x` captures the exit-time `hist` and shows `exited(0)`; the params form sends
+`-- params_demo.bt 1234 --verbose` (checked in the fake's argv log); `q` during a run asks,
+stops it and exits 0 with no leftover processes.
 
 ## M5 — Visualization panels
 - [ ] Histogram widget (eighth-block bars, bpftrace-style labels, under/overflow buckets, keyed selector)

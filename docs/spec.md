@@ -42,7 +42,7 @@ bpfdeck <path|git-url>
   → parse metadata (header comment, probes, params, unsafe calls)
   → validate against this kernel (background, cached per script hash)
   → user browses list, reads source/info
-  → user runs a script: confirm dialog → params form (if any) → run view
+  → user runs a script: params form (if any) → confirm dialog → run view (D-014)
   → live output: hist / map table / stats / log
   → stop (SIGINT → final END output → exit) → output stays viewable
 ```
@@ -93,6 +93,8 @@ Always shown before execution. Contents:
 - Red banner if `--unsafe` would be required; the `--unsafe` flag is **off** by default and
   must be toggled explicitly in this dialog (`u`), and the banner stays.
 - Keys: `Enter` run, `u` toggle unsafe (only if needed), `Esc` cancel.
+- Also lists why the run may fail here: no privileges, kernel lockdown, failed or partial
+  validation. These are warnings; the run is still allowed.
 
 ### 5.3 Parameters form (modal, only if the script uses parameters)
 - Positional: every `$1..$N` used in the script → one text field each. `$#` usage noted.
@@ -100,12 +102,18 @@ Always shown before execution. Contents:
   boolean when called with one argument or a bool default → checkbox.
 - USAGE lines from the header are shown above the form as help.
 - Values are passed as separate argv entries (never through a shell).
+- Positional fields cover `$1..$max` (bpftrace params are positional, `$3` needs `$1`,
+  `$2`); trailing empty ones are not passed, gaps become empty strings.
+- Named values equal to the default are not passed (D-014).
+- Keys: `Tab`/`↓` next field, `S-Tab`/`↑` previous, `Space` toggles a checkbox (types a
+  space in text fields), `Enter` continue to the confirmation, `Esc` cancel.
 
 ### 5.4 Run view
 Replaces the right pane (list stays visible, can be hidden with `z` for full width).
 
-Header line: script name, elapsed time, attached probe count (from `attached_probes`),
-state (`starting | running | stopping | exited(code) | failed`).
+Header (two lines, so it fits next to the list at 80 columns): script name, state
+(`starting | running | stopping | exited(code) | killed(sig) | failed`), elapsed time;
+then attached probe count (from `attached_probes`), error count, dropped count.
 
 Body is a set of **panels**, one per output stream, created on first appearance:
 
@@ -130,9 +138,18 @@ Keep the previous snapshot to show deltas (↑/↓ markers) in the top table.
 Stop: `Ctrl-C` or `x` inside run view sends SIGINT to bpftrace (NOT to bpfdeck), which
 makes bpftrace run `END` and print remaining maps — those final messages must be
 captured and rendered. After 5 s without exit → SIGTERM, after 2 s more → SIGKILL.
-Leaving the run view with `Esc` does not stop the run; the list row keeps `▶`.
+Leaving the run view with `Esc` does not stop the run; the list row keeps `▶`. `Enter`
+on the running script shows its run view again; `o` shows the last run (running or
+finished), whose output stays viewable until the next run starts.
 
-v1: one run at a time. Starting another asks to stop the current one.
+v1: one run at a time. Starting another asks to stop the current one. `q` with an active
+run asks, then stops it and quits once it has exited (so the exit-time dump still runs).
+
+Log panel (M4): follows the newest line by default. Scrolling up (`k`, `PgUp`, `g`) or `p`
+pauses on the lines currently shown; `G`/`End`, `p`, or scrolling back to the bottom
+follows again. `/` filters (case-insensitive substring) without changing pause/follow.
+Until the M5 panels exist, map/hist/stats/tseries messages appear in the log as one-line
+summaries (accent color); the latest snapshot per map name is already kept.
 
 ### 5.5 Status bar
 Context-sensitive key hints (`Theme::key_hint` for keys), bpftrace version, kernel
@@ -251,6 +268,8 @@ See decisions D-005 for the planned privilege-separated model.
 | `e` | list | open in `$EDITOR` |
 | `r` | list | rescan + revalidate |
 | `x`, `Ctrl-C` | run view | stop run (SIGINT to bpftrace) |
+| `j/k`, `PgUp/PgDn`, `g/G` | run view | scroll the log (up pauses, `G` follows) |
+| `o` | list | show the last run |
 | `p` | log | pause/follow |
 | `[` `]` | hist panel | previous/next key |
 | `s` | table panel | toggle sort |

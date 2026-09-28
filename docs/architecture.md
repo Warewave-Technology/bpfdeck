@@ -31,15 +31,19 @@ src/
     json.rs          pure: &str → OutputMsg (see docs/bpftrace-json.md)
     command.rs       pure: build argv for run/validate (unit-test every case)
   model/             pure view-models derived from events
-    run_state.rs     per-run panels: hist/table/stats/tseries/log ring buffer
-    hist.rs          bucket labels, scaling, keyed series
+    run_state.rs     one run: phase, counters, log, latest snapshot per map
+    log.rs           event log ring buffer (line joining, filter, eviction)
+    form.rs          parameters form state → positional + named args
+    describe.rs      one-line text for any OutputMsg (log summaries, --run)
+    hist.rs          bucket labels, scaling, keyed series (M5)
   ui/
     mod.rs           draw(frame, &App) — routes to screens
     theme.rs         Gruvbox palette + semantic styles (ONLY place with colors)
     browser.rs       list + detail tabs
     help.rs          `?` modal, generated from keymap.rs
     source_view.rs   line numbers + highlighter (reuses discovery::lexer regions)
-    run_view.rs      header + panel layout
+    run_view.rs      header + log (panel layout in M5)
+    modals.rs        params form, run confirmation, yes/no question
     widgets/         hist.rs, table.rs, log.rs, sparkline.rs, modal.rs, form.rs, filter.rs
   sys.rs             privilege check, lockdown detection, kernel release (/proc)
   headless.rs        `--list` / `--run <ID>`: debug entry points without the TUI
