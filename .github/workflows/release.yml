@@ -1,0 +1,73 @@
+name: release
+
+# Tag vX.Y.Z → static musl binaries for x86_64 and aarch64, attached to a GitHub release.
+# workflow_dispatch builds and uploads the artifacts without creating a release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
+    env:
+      # musl targets ship their own C runtime; the rust-lld bundled with the toolchain links
+      # both targets statically from this x86_64 runner, no cross toolchain needed (D-015).
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build
+        run: cargo build --locked --release --target ${{ matrix.target }}
+      - name: Check the binary
+        run: |
+          bin=target/${{ matrix.target }}/release/bpfdeck
+          file "$bin" | tee /dev/stderr | grep -Eq 'statically linked|static-pie linked'
+          size=$(stat -c %s "$bin")
+          echo "size: $size bytes"
+          test "$size" -lt 10485760 # spec §8: release binary < 10 MB
+          if [ "${{ matrix.target }}" = x86_64-unknown-linux-musl ]; then
+            "$bin" --version
+            "$bin" --list tests/fixtures/scripts
+          fi
+      - name: Package
+        run: |
+          name="bpfdeck-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp "target/${{ matrix.target }}/release/bpfdeck" README.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*.tar.gz*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
