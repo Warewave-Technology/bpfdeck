@@ -1,0 +1,11 @@
+---
+source: src/list.rs
+assertion_line: 193
+expression: "render_details(&[row])"
+---
+
+x.bt (ProbeList): Failed { reason: "no probe found" }
+  note: heuristic
+  ✗ kprobe:x
+  | ERROR: a
+  | ERROR: b

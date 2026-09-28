@@ -1,15 +1,15 @@
 ---
 source: src/list.rs
-assertion_line: 95
-expression: render(&scripts)
+assertion_line: 152
+expression: render(&rows)
 ---
-ID                      PROBES  PARAMS        FLAGS           DESCRIPTION
-missing_probe_demo.bt   1 (1)                                 Attaches to a kernel function that does not exist.
-net/tcpconnect_demo.bt  1 (1)                                 Print TCP connect() calls. Fixture for printf/log rendering
-no_header.bt            1 (1)
-params_demo.bt          2 (1)   $1 --verbose  usage           Positional and named parameters fixture.
-shebang_no_ext          1 (0)                                 Discovered via shebang, not extension.
-syscount_demo.bt        2 (1)                 usage           Count syscalls by process name, printed every second.
-unsafe_demo.bt          1 (0)                 unsafe(system)  Uses system(); requires --unsafe. bpfdeck must flag this
-vfs_latency_demo.bt     4 (2)                                 vfs_read latency as a log2 histogram (usecs).
+ID                      STATUS  PROBES  PARAMS        FLAGS           DESCRIPTION
+missing_probe_demo.bt   -       1 (1)                                 Attaches to a kernel function that does not exist.
+net/tcpconnect_demo.bt  -       1 (1)                                 Print TCP connect() calls. Fixture for printf/log rendering
+no_header.bt            -       1 (1)
+params_demo.bt          -       2 (1)   $1 --verbose  usage           Positional and named parameters fixture.
+shebang_no_ext          -       1 (0)                                 Discovered via shebang, not extension.
+syscount_demo.bt        -       2 (1)                 usage           Count syscalls by process name, printed every second.
+unsafe_demo.bt          -       1 (0)                 unsafe(system)  Uses system(); requires --unsafe. bpfdeck must flag this
+vfs_latency_demo.bt     -       4 (2)                                 vfs_read latency as a log2 histogram (usecs).
 8 script(s)

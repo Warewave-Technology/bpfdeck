@@ -1,0 +1,13 @@
+---
+source: src/headless.rs
+assertion_line: 282
+expression: "lines.join(\"\\n\")"
+---
+attached 3 probes
+Printf: Tracing block device I/O... Hit Ctrl-C to end.
+map @syscalls: bash=12, sshd=40, node=311
+map @syscalls: bash=3, sshd=55, node=290, curl=7
+hist @usecs: [0, 1):2 [2, 4):5 [4, 8):19 [8, 16):64 [16, 32):210 [32, 64):95 [64, 128):11 [128, 256):1
+hist @h: [0, 10):1 [50, 60):1 [100, ...):1
+hist @: [bpftrace] [2, 4):1 | [curl] (..., 0):1 [0, 1):1 [256, 512):1 [1024, 2048):2
+helper_error probe_read_user: Bad address (line 1)

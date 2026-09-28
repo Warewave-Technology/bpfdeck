@@ -1,14 +1,17 @@
 mod app;
 mod bpftrace;
 mod discovery;
+mod headless;
 mod list;
 mod source;
 mod sys;
 mod ui;
 
+use std::path::Path;
+use std::process::ExitCode;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
 use ratatui::crossterm::event::{self, Event};
 
@@ -25,15 +28,34 @@ struct Cli {
     #[arg(long, default_value = "bpftrace")]
     bpftrace: String,
 
-    /// Print discovered scripts and their metadata as a table, then exit (debug aid).
-    #[arg(long)]
+    /// Print discovered scripts, their metadata and validation status, then exit (debug aid).
+    #[arg(long, conflicts_with = "run")]
     list: bool,
+
+    /// Run the script with this ID without the TUI, printing parsed output (debug aid).
+    #[arg(long, value_name = "ID")]
+    run: Option<String>,
+
+    /// Parameter for --run, repeatable: `--param=--name=value` / `--param=--flag` for
+    /// named, anything else positional.
+    #[arg(
+        long = "param",
+        value_name = "ARG",
+        allow_hyphen_values = true,
+        requires = "run"
+    )]
+    params: Vec<String>,
 }
 
-fn main() -> Result<()> {
+fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
+    let bpftrace = Path::new(&cli.bpftrace);
     if cli.list {
-        return print_list(&cli.source);
+        headless::list(&cli.source, bpftrace)?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    if let Some(id) = &cli.run {
+        return headless::run(&cli.source, bpftrace, id, &cli.params);
     }
     let mut app = App::new(cli.source);
 
@@ -41,7 +63,7 @@ fn main() -> Result<()> {
     let mut terminal = ratatui::init();
     let result = run(&mut terminal, &mut app);
     ratatui::restore();
-    result
+    result.map(|()| ExitCode::SUCCESS)
 }
 
 fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
@@ -54,41 +76,5 @@ fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
             app.on_key(key);
         }
     }
-    Ok(())
-}
-
-fn print_list(input: &str) -> Result<()> {
-    let cache_root = source::default_cache_root()?;
-    let resolved = source::resolve(input, &cache_root).with_context(|| format!("resolving {input}"))?;
-    let found = match &resolved.file {
-        Some(file) => discovery::single_file(file)?,
-        None => discovery::walk(&resolved.root)?,
-    };
-    for warning in resolved.warnings.iter().chain(&found.warnings) {
-        eprintln!("warning: {warning}");
-    }
-
-    let mut scripts = Vec::with_capacity(found.scripts.len());
-    for file in found.scripts {
-        let src = match std::fs::read(&file.path) {
-            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-            Err(e) => {
-                eprintln!("warning: cannot read {}: {e}", file.id);
-                continue;
-            }
-        };
-        let meta = discovery::metadata::extract(&src);
-        scripts.push((file, meta));
-    }
-    match &resolved.origin {
-        source::Origin::Local => println!("source: local {}", resolved.root.display()),
-        source::Origin::Git { spec, outcome } => println!(
-            "source: git {}#{} ({outcome:?}) → {}",
-            spec.url,
-            spec.reference.as_deref().unwrap_or("HEAD"),
-            resolved.root.display()
-        ),
-    }
-    print!("{}", list::render(&scripts));
     Ok(())
 }
