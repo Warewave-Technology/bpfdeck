@@ -3,6 +3,7 @@ mod bpftrace;
 mod discovery;
 mod list;
 mod source;
+mod sys;
 mod ui;
 
 use std::time::Duration;
