@@ -175,7 +175,7 @@ impl Validator {
         let output = out.combined();
         let verdict = if out.success {
             Verdict::Ok
-        } else if output.contains("--unsafe") {
+        } else if needs_unsafe(&output) {
             Verdict::NeedsUnsafe
         } else {
             Verdict::Failed {
@@ -275,6 +275,13 @@ fn failed(strategy: Strategy, reason: String) -> Validation {
         notes: Vec::new(),
         probes: Vec::new(),
     }
+}
+
+/// bpftrace's refusal to run unsafe builtins. The wording changed between versions:
+/// "…you need the --unsafe flag" (stdlib, ≥ 0.24) and "…is an unsafe function being
+/// used in safe mode" (≤ 0.23, verified with Debian 13's 0.23.2).
+fn needs_unsafe(output: &str) -> bool {
+    output.contains("--unsafe") || output.contains("unsafe function being used in safe mode")
 }
 
 /// The first line bpftrace marks as an error, else the first non-empty line.
@@ -450,6 +457,19 @@ mod tests {
             "{elapsed:?}: more than 4 ran at once"
         );
         assert!(elapsed < Duration::from_millis(3000), "{elapsed:?}: ran serially");
+    }
+
+    #[test]
+    fn unsafe_refusals_across_versions() {
+        assert!(needs_unsafe(
+            "stdin:7:3-17: ERROR: system() is unsafe. To use you need the --unsafe flag"
+        ));
+        assert!(needs_unsafe(
+            "/s/unsafe_demo.bt:7:3-19: ERROR: system() is an unsafe function being used in safe mode"
+        ));
+        assert!(!needs_unsafe(
+            "ERROR: tracepoint not found: sched:sched_process_exec"
+        ));
     }
 
     #[test]
