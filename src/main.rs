@@ -5,6 +5,7 @@ mod discovery;
 mod headless;
 mod keymap;
 mod list;
+mod model;
 mod msg;
 mod source;
 mod sys;
