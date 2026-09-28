@@ -1,11 +1,11 @@
-//! One bpftrace run as the UI sees it (spec §5.4): phase, counters, log, latest snapshots.
+//! One bpftrace run as the UI sees it (spec §5.4): phase, counters, log, panels.
 //! Time is passed in by the caller so everything here is deterministic.
 
-use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use super::describe::describe;
 use super::log::{DEFAULT_CAPACITY, LogBuffer, LogKind};
+use super::panels::Panels;
 use crate::bpftrace::json::OutputMsg;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,7 +63,7 @@ pub struct Run {
     pub dropped: u64,
     pub log: LogBuffer,
     /// Latest message per map name; each new print replaces the previous snapshot.
-    pub snapshots: BTreeMap<String, OutputMsg>,
+    pub panels: Panels,
 }
 
 impl Run {
@@ -82,7 +82,7 @@ impl Run {
             errors: 0,
             dropped: 0,
             log,
-            snapshots: BTreeMap::new(),
+            panels: Panels::default(),
         }
     }
 
@@ -105,7 +105,17 @@ impl Run {
         }
     }
 
-    pub fn output(&mut self, msg: OutputMsg) {
+    /// Run time at `at` (zero before the start was confirmed).
+    fn run_time(&self, at: Instant) -> Duration {
+        self.started
+            .map_or(Duration::ZERO, |s| at.saturating_duration_since(s))
+    }
+
+    pub fn output(&mut self, msg: OutputMsg, at: Instant) {
+        let now = self.run_time(at);
+        if self.panels.apply(&msg, now) {
+            return;
+        }
         match &msg {
             OutputMsg::AttachedProbes(n) => {
                 self.attached_probes = Some(*n);
@@ -113,17 +123,15 @@ impl Run {
             }
             OutputMsg::Text { text, .. } => self.log.push_text(LogKind::Output, text),
             OutputMsg::Value(_) => self.log.push_line(LogKind::Output, &describe(&msg)),
-            OutputMsg::Map { name, .. }
-            | OutputMsg::Hist { name, .. }
-            | OutputMsg::Stats { name, .. }
-            | OutputMsg::Tseries { name, .. } => {
-                self.log.push_line(LogKind::Summary, &describe(&msg));
-                self.snapshots.insert(name.clone(), msg);
-            }
             OutputMsg::HelperError { .. } => {
                 self.errors += 1;
                 self.log.push_line(LogKind::Error, &describe(&msg));
             }
+            // Panel messages were taken by `panels.apply` above.
+            OutputMsg::Map { .. }
+            | OutputMsg::Hist { .. }
+            | OutputMsg::Stats { .. }
+            | OutputMsg::Tseries { .. } => {}
             OutputMsg::Unknown(_) | OutputMsg::NotJson(_) => {
                 self.log.push_line(LogKind::Raw, &describe(&msg))
             }
@@ -150,6 +158,7 @@ impl Run {
 
     pub fn exited(&mut self, exit: ExitInfo, at: Instant) {
         self.tick(at);
+        self.panels.focus_final();
         self.log.push_line(LogKind::System, &exit.describe());
         self.exit = Some(exit);
         self.phase = Phase::Exited;
@@ -196,7 +205,7 @@ mod tests {
     fn feed(run: &mut Run, ndjson: &str) {
         for line in ndjson.lines() {
             for msg in parse_line(line) {
-                run.output(msg);
+                run.output(msg, Instant::now());
             }
         }
     }
@@ -225,7 +234,7 @@ mod tests {
         .expect("fixture");
         feed(&mut run, &session);
         assert_eq!(run.attached_probes, Some(3));
-        assert_eq!(run.snapshots.len(), 2, "@syscalls and @usecs, latest only");
+        assert_eq!(run.panels.list.len(), 2, "@syscalls and @usecs, latest only");
         run.tick(t0 + Duration::from_secs(12));
         assert_eq!(run.elapsed, Duration::from_secs(12));
 
@@ -263,7 +272,15 @@ mod tests {
             )
         );
         assert_eq!(lines.last(), Some(&(LogKind::System, "exited(0)".into())));
-        assert!(lines.contains(&(LogKind::Summary, "hist @usecs: [0, 1):9".into())));
+        assert!(
+            !lines.iter().any(|(_, t)| t.starts_with("hist ")),
+            "snapshots go to panels, not the log"
+        );
+        assert_eq!(
+            run.panels.list[1].selected_hist().map(|b| b[0].count),
+            Some(9),
+            "exit-time dump kept"
+        );
 
         // Time stops once the run is over.
         run.tick(t0 + Duration::from_secs(60));

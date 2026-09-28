@@ -12,8 +12,6 @@ pub enum LogKind {
     Error,
     /// Unknown message types and non-JSON stdout, kept verbatim.
     Raw,
-    /// One-line summaries of map/hist/stats/tseries snapshots.
-    Summary,
     /// bpfdeck's own notes: command line, stop requested, exit status.
     System,
 }

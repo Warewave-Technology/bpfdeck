@@ -1,0 +1,10 @@
+---
+source: src/ui/widgets/mod.rs
+assertion_line: 112
+expression: "draw(&p.list[0], 50, 5)"
+---
+"[2, 4)     1 ████████████████████████████████████ "
+"[4, 8)     0                                      "
+"[8, 16)    0                                      "
+"[16, 32)   0                                      "
+"… 6 more buckets                                  "

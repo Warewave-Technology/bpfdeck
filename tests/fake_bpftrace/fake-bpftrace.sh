@@ -16,6 +16,8 @@
 #   // fake: stderr=<line>        // fake: exit=<code>   (exit right after replay)
 #   // fake: ignore_int=1         // fake: ignore_term=1
 #   // fake: child=1              (leave a background sleep in the process group)
+#   // fake: flood=<n>            (n printf lines as fast as possible, before the replay)
+#   // fake: flood_maps=<n>       (n snapshots of map @flood; the last one has value n)
 #   // fake: dryrun_sleep=<secs>  // fake: argv_log=<path>   (append argv, one arg per line)
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -115,6 +117,14 @@ fi
 
 err=$(directive stderr)
 [ -n "$err" ] && echo "$err" >&2
+
+flood=$(directive flood)
+[ -n "$flood" ] && yes '{"type": "printf", "data": "flood line\n"}' | head -n "$flood"
+flood_maps=$(directive flood_maps)
+if [ -n "$flood_maps" ]; then
+  yes '{"type": "map", "data": {"@flood": {"k": 1}}}' | head -n "$((flood_maps - 1))"
+  echo "{\"type\": \"map\", \"data\": {\"@flood\": {\"k\": $flood_maps}}}"
+fi
 
 replay=$(directive replay)
 delay=$(directive delay)

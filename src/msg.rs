@@ -8,7 +8,7 @@ use std::time::Instant;
 use ratatui::crossterm::event::KeyEvent;
 
 use crate::bpftrace::BpftraceInfo;
-use crate::bpftrace::runner::RunEvent;
+use crate::bpftrace::coalesce::Batch;
 use crate::bpftrace::validate::{Strategy, Validation, ValidationRequest};
 use crate::catalog::Catalog;
 use crate::source::ResolvedSource;
@@ -49,11 +49,12 @@ pub enum Msg {
         run_id: u64,
         reason: String,
     },
-    /// Output, stderr or exit of a run; `at` is when the executor received it.
+    /// Output, stderr and exit of a run, coalesced while the UI is behind (spec §6.5);
+    /// `at` is when the executor sent the batch.
     Run {
         run_id: u64,
         at: Instant,
-        event: RunEvent,
+        batch: Batch,
     },
     /// 250 ms heartbeat while a run is active (elapsed time).
     Tick(Instant),

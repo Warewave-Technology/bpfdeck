@@ -108,6 +108,17 @@ impl Theme {
         Style::new().fg(RED).bg(BG1).add_modifier(Modifier::BOLD)
     }
 
+    // Top table deltas vs the previous snapshot. Neutral hues: up/down is not good/bad.
+    pub fn delta_up() -> Style {
+        Style::new().fg(YELLOW)
+    }
+    pub fn delta_down() -> Style {
+        Style::new().fg(AQUA)
+    }
+    pub fn delta_new() -> Style {
+        Style::new().fg(PURPLE).add_modifier(Modifier::BOLD)
+    }
+
     // Source view (light syntax highlighting).
     pub fn line_number() -> Style {
         Style::new().fg(BG3)

@@ -1,0 +1,9 @@
+---
+source: src/ui/widgets/mod.rs
+assertion_line: 157
+expression: "draw(&p.list[0], 50, 4)"
+---
+"key    count  average  total                      "
+"read      10     1234  12340                      "
+"write      2       50    100                      "
+"                                                  "

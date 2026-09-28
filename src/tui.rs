@@ -17,8 +17,10 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc;
 
 use crate::app::App;
+use crate::bpftrace::coalesce::Coalescer;
 use crate::bpftrace::runner::{self, Escalation, RunEvent, RunHandle};
 use crate::bpftrace::validate::{self, Strategy, Validator};
+use crate::model::log;
 use crate::msg::{Cmd, Msg};
 use crate::{bpftrace, catalog, source, sys, ui};
 
@@ -26,18 +28,23 @@ const CHANNEL_CAPACITY: usize = 1024;
 const INPUT_POLL: Duration = Duration::from_millis(50);
 /// Redraw cadence while a run is active (elapsed time), spec §8.
 const TICK: Duration = Duration::from_millis(250);
+/// Longest the loop applies queued messages before drawing again. Keeps a printf flood
+/// from starving the screen and the keyboard.
+const FRAME_BUDGET: Duration = Duration::from_millis(30);
 
 pub async fn run(input: String, bpftrace_path: PathBuf) -> Result<()> {
     let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+    // Keys and signals get their own channel so they are never stuck behind run output.
+    let (input_tx, mut input_rx) = mpsc::channel(CHANNEL_CAPACITY);
     // Handlers first, so nothing spawned later inherits a default/ignored disposition
     // we then change (see runner::spawn).
-    spawn_signal_forwarder(tx.clone())?;
+    spawn_signal_forwarder(input_tx.clone())?;
 
     // ratatui::init installs a panic hook that restores the terminal.
     let mut terminal = ratatui::init();
     let input_gate = Arc::new(Mutex::new(()));
     let stop_input = Arc::new(AtomicBool::new(false));
-    spawn_input_thread(tx.clone(), input_gate.clone(), stop_input.clone());
+    spawn_input_thread(input_tx, input_gate.clone(), stop_input.clone());
 
     let mut app = App::new(input);
     let mut exec = Executor {
@@ -47,7 +54,7 @@ pub async fn run(input: String, bpftrace_path: PathBuf) -> Result<()> {
         input_gate,
         run: None,
     };
-    let result = event_loop(&mut terminal, &mut app, &mut exec, &mut rx).await;
+    let result = event_loop(&mut terminal, &mut app, &mut exec, &mut input_rx, &mut rx).await;
     // Dropping the handle kills a still running bpftrace (its whole process group).
     drop(exec);
     stop_input.store(true, Ordering::Release);
@@ -59,6 +66,7 @@ async fn event_loop(
     terminal: &mut DefaultTerminal,
     app: &mut App,
     exec: &mut Executor,
+    input_rx: &mut mpsc::Receiver<Msg>,
     rx: &mut mpsc::Receiver<Msg>,
 ) -> Result<()> {
     for cmd in app.init() {
@@ -66,11 +74,24 @@ async fn event_loop(
     }
     while !app.should_quit {
         terminal.draw(|f| ui::draw(f, app))?;
-        let Some(msg) = rx.recv().await else { break };
+        let msg = tokio::select! {
+            biased;
+            msg = input_rx.recv() => msg,
+            msg = rx.recv() => msg,
+        };
+        let Some(msg) = msg else { break };
         let mut cmds = app.update(msg);
-        // Apply everything that is already queued before drawing again.
-        while let Ok(msg) = rx.try_recv() {
-            cmds.extend(app.update(msg));
+        // Apply what is already queued, keys first, within the frame budget.
+        let deadline = Instant::now() + FRAME_BUDGET;
+        while !app.should_quit && Instant::now() < deadline {
+            if let Ok(msg) = input_rx.try_recv() {
+                cmds.extend(app.update(msg));
+                continue;
+            }
+            match rx.try_recv() {
+                Ok(msg) => cmds.extend(app.update(msg)),
+                Err(_) => break,
+            }
         }
         for cmd in cmds {
             exec.execute(cmd, terminal)?;
@@ -215,7 +236,7 @@ impl Executor {
     /// until it exits.
     fn start_run(&mut self, run_id: u64, argv: &[std::ffi::OsString]) {
         let tx = self.tx.clone();
-        let (events_tx, mut events) = mpsc::channel(runner::CHANNEL_CAPACITY);
+        let (events_tx, events) = mpsc::channel(runner::CHANNEL_CAPACITY);
         let handle = match runner::spawn(argv, events_tx, Escalation::default()) {
             Ok(handle) => handle,
             Err(e) => {
@@ -231,36 +252,7 @@ impl Executor {
             }
         };
         self.run = Some((run_id, handle));
-        tokio::spawn(async move {
-            if tx
-                .send(Msg::RunStarted {
-                    run_id,
-                    at: Instant::now(),
-                })
-                .await
-                .is_err()
-            {
-                return;
-            }
-            let mut tick = tokio::time::interval(TICK);
-            loop {
-                tokio::select! {
-                    event = events.recv() => {
-                        let Some(event) = event else { break };
-                        let done = matches!(event, RunEvent::Exited(_));
-                        let msg = Msg::Run { run_id, at: Instant::now(), event };
-                        if tx.send(msg).await.is_err() || done {
-                            break;
-                        }
-                    }
-                    _ = tick.tick() => {
-                        if tx.send(Msg::Tick(Instant::now())).await.is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-        });
+        tokio::spawn(forward_run(run_id, events, tx, TICK));
     }
 
     /// Suspend the TUI, run `$VISUAL`/`$EDITOR` (split on whitespace, no shell), resume.
@@ -308,6 +300,55 @@ fn resume(terminal: &mut DefaultTerminal) -> io::Result<()> {
     terminal.clear()
 }
 
+/// Forward a run's events to the app until it exits, plus a tick for the elapsed time.
+/// Events are held in a [`Coalescer`] until the app channel has room: when the UI keeps
+/// up every batch is tiny; when it lags, snapshots collapse to the latest per map and
+/// excess text lines are dropped and counted (spec §6.5).
+async fn forward_run(
+    run_id: u64,
+    mut events: mpsc::Receiver<RunEvent>,
+    tx: mpsc::Sender<Msg>,
+    tick_every: Duration,
+) {
+    if tx
+        .send(Msg::RunStarted {
+            run_id,
+            at: Instant::now(),
+        })
+        .await
+        .is_err()
+    {
+        return;
+    }
+    let mut pending = Coalescer::new(log::DEFAULT_CAPACITY);
+    let mut tick = tokio::time::interval(tick_every);
+    let mut reading = true;
+    while reading || !pending.is_empty() {
+        tokio::select! {
+            event = events.recv(), if reading => match event {
+                Some(event) => {
+                    pending.push(event);
+                    // Take what is already there without yielding (bounded by the channel).
+                    for _ in 0..runner::CHANNEL_CAPACITY {
+                        let Ok(event) = events.try_recv() else { break };
+                        pending.push(event);
+                    }
+                }
+                // The runner closes the channel right after `Exited`.
+                None => reading = false,
+            },
+            permit = tx.reserve(), if !pending.is_empty() => match permit {
+                Ok(permit) => permit.send(Msg::Run { run_id, at: Instant::now(), batch: pending.take() }),
+                Err(_) => return,
+            },
+            _ = tick.tick(), if reading => {
+                // Only a redraw hint: skip it rather than wait when the app is busy.
+                let _ = tx.try_send(Msg::Tick(Instant::now()));
+            }
+        }
+    }
+}
+
 /// `$TMPDIR/bpfdeck-<pid>-<name>`, keeping the file name so editors pick the right mode.
 fn temp_copy(path: &Path) -> Result<PathBuf> {
     let name = path
@@ -317,4 +358,83 @@ fn temp_copy(path: &Path) -> Result<PathBuf> {
     let target = std::env::temp_dir().join(format!("bpfdeck-{}-{name}", std::process::id()));
     std::fs::copy(path, &target).with_context(|| format!("copying {} for editing", path.display()))?;
     Ok(target)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bpftrace::command::{self, RunArgs};
+    use crate::bpftrace::json::{MapValue, OutputMsg};
+    use crate::bpftrace::testutil::{fake, script};
+
+    /// A printf/map flood against a deliberately slow consumer: nothing is lost silently,
+    /// snapshots collapse, and the exit (after the last snapshot) always arrives.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn flood_is_coalesced_and_accounted_for() {
+        const LINES: u64 = 100_000;
+        const MAPS: u64 = 50_000;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = script(
+            &dir,
+            "flood.bt",
+            &format!("// fake: flood={LINES}\n// fake: flood_maps={MAPS}\n// fake: exit=0\nBEGIN {{}}\n"),
+        );
+        let args = RunArgs {
+            script: &s,
+            positional: &[],
+            named: &[],
+            allow_unsafe: false,
+        };
+        let argv = command::run_argv(&fake(), &args).expect("argv");
+        let (events_tx, events) = mpsc::channel(runner::CHANNEL_CAPACITY);
+        let _handle = runner::spawn(&argv, events_tx, Escalation::default()).expect("spawn");
+        let (tx, mut rx) = mpsc::channel(4);
+        tokio::spawn(forward_run(1, events, tx, Duration::from_millis(50)));
+
+        let (mut texts, mut dropped, mut maps, mut batches) = (0u64, 0u64, 0u64, 0u64);
+        let mut last_map = None;
+        let mut exited = false;
+        while !exited {
+            let msg = tokio::time::timeout(Duration::from_secs(60), rx.recv())
+                .await
+                .expect("flood did not finish in time")
+                .expect("forwarder ended without Exited");
+            let Msg::Run { batch, .. } = msg else { continue };
+            batches += 1;
+            dropped += batch.dropped;
+            let n = batch.events.len();
+            for (i, event) in batch.events.into_iter().enumerate() {
+                match event {
+                    RunEvent::Output(OutputMsg::Text { .. }) => texts += 1,
+                    RunEvent::Output(OutputMsg::Map {
+                        value: MapValue::Keyed(rows),
+                        ..
+                    }) => {
+                        maps += 1;
+                        last_map = rows.first().map(|(_, v)| v.clone());
+                    }
+                    RunEvent::Exited(exit) => {
+                        assert_eq!(exit.code, Some(0));
+                        assert_eq!(i, n - 1, "exit is the last event");
+                        exited = true;
+                    }
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+            // A slow UI: 1 ms per message.
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        assert_eq!(
+            texts + dropped,
+            LINES,
+            "every printf line delivered or counted as dropped"
+        );
+        assert!(maps < MAPS, "snapshots were coalesced ({maps} of {MAPS})");
+        assert_eq!(
+            last_map,
+            Some(serde_json::json!(MAPS)),
+            "the latest snapshot survives"
+        );
+        assert!(batches < LINES, "events were batched ({batches} messages)");
+    }
 }

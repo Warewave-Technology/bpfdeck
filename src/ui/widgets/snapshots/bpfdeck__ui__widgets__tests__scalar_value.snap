@@ -1,0 +1,12 @@
+---
+source: src/ui/widgets/mod.rs
+assertion_line: 147
+expression: "draw(&p.list[0], 40, 7)"
+---
+"                                        "
+"                                        "
+"                   42                   "
+"                                        "
+"      changed at 00:02 · 2 updates      "
+"                                        "
+"                                        "

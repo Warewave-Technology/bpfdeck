@@ -79,6 +79,9 @@ pub enum Action {
     Stop,
     ToggleFollow,
     ToggleFullWidth,
+    PrevKey,
+    NextKey,
+    ToggleSort,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -186,6 +189,11 @@ pub const BINDINGS: &[Binding] = &[
     bind(Run, &[ch('g'), key(Home)], "g/Home", Action::Top, "oldest line (pauses)", None),
     bind(Run, &[ch('G'), key(End)], "G/End", Action::Bottom, "newest line, follow", None),
     bind(Run, &[ch('z')], "z", Action::ToggleFullWidth, "toggle full width", None),
+    bind(Run, &[key(Tab)], "Tab", Action::NextTab, "next panel", Some("panel")),
+    bind(Run, &[key(BackTab)], "S-Tab", Action::PrevTab, "previous panel", None),
+    bind(Run, &[ch('[')], "[", Action::PrevKey, "previous key (keyed hist)", None),
+    bind(Run, &[ch(']')], "]", Action::NextKey, "next key (keyed hist)", None),
+    bind(Run, &[ch('s')], "s", Action::ToggleSort, "table: sort by key/value", None),
     bind(Run, &[key(Esc)], "Esc", Action::Close, "back to list, run continues", Some("back")),
     bind(Run, &[ch('?')], "?", Action::Help, "help", Some("help")),
 

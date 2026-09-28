@@ -1,0 +1,12 @@
+---
+source: src/ui/widgets/mod.rs
+assertion_line: 118
+expression: "draw(&p.list[0], 60, 7)"
+---
+"key  value▼                                                 "
+"node    290 ↓ ██████████████████████████████████████████████"
+"sshd     55 ↑ ████████▋                                     "
+"curl      7 + █                                             "
+"bash      3 ↓ ▍                                             "
+"                                                            "
+"                                                            "

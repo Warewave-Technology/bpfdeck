@@ -5,6 +5,7 @@ mod help;
 mod modals;
 mod run_view;
 mod source_view;
+mod widgets;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
@@ -163,6 +164,7 @@ fn env_spans(app: &App) -> Vec<Span<'static>> {
 mod tests {
     use super::*;
     use crate::app::fixtures::*;
+    use crate::bpftrace::coalesce::one;
     use crate::msg::Msg;
     use crate::sys::{Lockdown, Privilege};
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -326,13 +328,15 @@ mod tests {
             app.update(Msg::Run {
                 run_id,
                 at: t0,
-                event: RunEvent::Output(msg),
+                batch: one(RunEvent::Output(msg)),
             });
         }
         app.update(Msg::Run {
             run_id,
             at: t0,
-            event: RunEvent::Stderr("WARNING: could not resolve symbol 0xffffffff81000000".into()),
+            batch: one(RunEvent::Stderr(
+                "WARNING: could not resolve symbol 0xffffffff81000000".into(),
+            )),
         });
         app.update(Msg::Tick(t0 + std::time::Duration::from_secs(12)));
         (app, run_id, t0)
@@ -387,7 +391,7 @@ mod tests {
             app.update(Msg::Run {
                 run_id,
                 at: t0,
-                event: RunEvent::Output(msg),
+                batch: one(RunEvent::Output(msg)),
             });
         }
         let exit = RunExit {
@@ -399,7 +403,7 @@ mod tests {
         app.update(Msg::Run {
             run_id,
             at: t0 + std::time::Duration::from_secs(13),
-            event: RunEvent::Exited(exit),
+            batch: one(RunEvent::Exited(exit)),
         });
         insta::assert_snapshot!(render(&app, 80, 24));
     }

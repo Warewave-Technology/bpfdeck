@@ -1,0 +1,13 @@
+---
+source: src/ui/widgets/mod.rs
+assertion_line: 141
+expression: "draw(&p.list[0], 40, 8)"
+---
+"key                           value▼    "
+"a_rather_long_process_name_0    1000   █"
+"a_rather_long_process_name_1     970   ▉"
+"a_rather_long_process_name_2     940   ▉"
+"a_rather_long_process_name_3     910   ▉"
+"a_rather_long_process_name_4     880   ▉"
+"a_rather_long_process_name_5     850   ▊"
+"… 24 more rows                          "

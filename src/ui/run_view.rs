@@ -9,14 +9,53 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph};
 
 use super::theme::Theme;
+use super::widgets;
 use crate::app::App;
 use crate::model::log::LogKind;
 use crate::model::run_state::{Phase, Run};
 
 pub fn draw(frame: &mut Frame, area: Rect, app: &App, run: &Run) {
-    let [header, log] = Layout::vertical([Constraint::Length(2), Constraint::Min(1)]).areas(area);
+    let [header, body] = Layout::vertical([Constraint::Length(2), Constraint::Min(1)]).areas(area);
     frame.render_widget(Paragraph::new(header_lines(run)), header);
+    if run.panels.list.is_empty() {
+        draw_log(frame, body, app, run);
+        return;
+    }
+    // One panel at a time (tab bar when several) over the log, spec §5.4.
+    let [panel, log] = Layout::vertical([Constraint::Percentage(70), Constraint::Percentage(30)]).areas(body);
+    draw_panel(frame, panel, run);
     draw_log(frame, log, app, run);
+}
+
+fn draw_panel(frame: &mut Frame, area: Rect, run: &Run) {
+    let panels = &run.panels;
+    let Some(focused) = panels.focused() else { return };
+    let mut title = vec![Span::raw(" ")];
+    if panels.list.len() > 1 {
+        for (i, p) in panels.list.iter().enumerate() {
+            if i > 0 {
+                title.push(Span::styled(" │ ", Theme::border()));
+            }
+            let style = if i == panels.focus {
+                Theme::tab_active()
+            } else {
+                Theme::tab_inactive()
+            };
+            title.push(Span::styled(p.name.clone(), style));
+        }
+    } else {
+        title.push(Span::styled(focused.name.clone(), Theme::title()));
+    }
+    title.push(Span::styled(format!(" · {} ", focused.kind()), Theme::muted()));
+    let info = format!(" {} updates · {} ", focused.updates, elapsed(focused.updated_at));
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Theme::border())
+        .title(Line::from(title))
+        .title(Line::styled(info, Theme::muted()).right_aligned());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    widgets::render(frame, inner, focused);
 }
 
 /// `▶ vfs_latency_demo.bt  running  00:12`
@@ -73,7 +112,6 @@ fn kind_style(kind: LogKind) -> Style {
         LogKind::Output => Theme::base(),
         LogKind::Error => Theme::error(),
         LogKind::Raw | LogKind::System => Theme::muted(),
-        LogKind::Summary => Theme::accent(),
     }
 }
 

@@ -234,8 +234,8 @@ impl App {
                 self.on_run_failed(run_id, &reason);
                 Vec::new()
             }
-            Msg::Run { run_id, at, event } => {
-                self.on_run_event(run_id, at, event);
+            Msg::Run { run_id, at, batch } => {
+                self.on_run_batch(run_id, at, batch);
                 Vec::new()
             }
             Msg::Tick(now) => {

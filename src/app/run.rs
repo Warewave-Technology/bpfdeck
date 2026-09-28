@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{App, BpftraceState, Level, Overlay, Screen, ValidationState};
+use crate::bpftrace::coalesce::Batch;
 use crate::bpftrace::command::{self, CommandError, NamedArg, RunArgs};
 use crate::bpftrace::runner::{RunEvent, RunExit};
 use crate::bpftrace::validate::Verdict;
@@ -332,6 +333,23 @@ impl App {
             }
             Action::Bottom => self.log_view.follow = true,
             Action::ToggleFullWidth => self.full_width = !self.full_width,
+            Action::NextTab | Action::PrevTab => {
+                let delta = if action == Action::NextTab { 1 } else { -1 };
+                if let Some(run) = &mut self.run {
+                    run.panels.cycle_focus(delta);
+                }
+            }
+            Action::PrevKey | Action::NextKey => {
+                let delta = if action == Action::NextKey { 1 } else { -1 };
+                if let Some(panel) = self.run.as_mut().and_then(|r| r.panels.focused_mut()) {
+                    panel.cycle_key(delta);
+                }
+            }
+            Action::ToggleSort => {
+                if let Some(panel) = self.run.as_mut().and_then(|r| r.panels.focused_mut()) {
+                    panel.sort_by_key = !panel.sort_by_key;
+                }
+            }
             Action::Close => self.screen = Screen::Browser,
             Action::Help => self.overlay = Some(Overlay::Help),
             _ => {}
@@ -381,17 +399,22 @@ impl App {
         }
     }
 
-    pub(super) fn on_run_event(&mut self, run_id: u64, at: std::time::Instant, event: RunEvent) {
+    pub(super) fn on_run_batch(&mut self, run_id: u64, at: std::time::Instant, batch: Batch) {
         let Some(run) = self.run.as_mut().filter(|r| r.id == run_id) else {
             return;
         };
-        match event {
-            RunEvent::Output(msg) => run.output(msg),
-            RunEvent::Stderr(line) => run.stderr(&line),
-            RunEvent::Exited(exit) => {
-                run.exited(exit_info(exit), at);
-                if self.quit_after_run {
-                    self.should_quit = true;
+        run.dropped += batch.dropped;
+        // Ticks are skipped while the channel is full; batches keep the clock moving.
+        run.tick(at);
+        for event in batch.events {
+            match event {
+                RunEvent::Output(msg) => run.output(msg, at),
+                RunEvent::Stderr(line) => run.stderr(&line),
+                RunEvent::Exited(exit) => {
+                    run.exited(exit_info(exit), at);
+                    if self.quit_after_run {
+                        self.should_quit = true;
+                    }
                 }
             }
         }
@@ -415,6 +438,7 @@ mod tests {
 
     use super::super::fixtures::*;
     use super::*;
+    use crate::bpftrace::coalesce::one;
     use crate::bpftrace::json::OutputMsg;
     use crate::model::run_state::Phase;
     use crate::msg::Msg;
@@ -590,14 +614,14 @@ mod tests {
         app.update(Msg::Run {
             run_id,
             at: t0,
-            event: RunEvent::Output(OutputMsg::AttachedProbes(4)),
+            batch: one(RunEvent::Output(OutputMsg::AttachedProbes(4))),
         });
         app.update(Msg::Tick(t0 + Duration::from_secs(3)));
         // Events of another run are ignored.
         app.update(Msg::Run {
             run_id: 99,
             at: t0,
-            event: exited(1),
+            batch: one(exited(1)),
         });
         let run = app.run.as_ref().expect("run");
         assert_eq!(
@@ -620,7 +644,7 @@ mod tests {
         app.update(Msg::Run {
             run_id,
             at: t0 + Duration::from_secs(4),
-            event: exited(0),
+            batch: one(exited(0)),
         });
         let run = app.run.as_ref().expect("run");
         assert!(run.succeeded());
@@ -680,7 +704,7 @@ mod tests {
         app.update(Msg::Run {
             run_id,
             at: Instant::now(),
-            event: exited(0),
+            batch: one(exited(0)),
         });
         assert!(app.should_quit);
     }
@@ -721,7 +745,7 @@ mod tests {
             app.update(Msg::Run {
                 run_id,
                 at: Instant::now(),
-                event: RunEvent::Stderr(format!("line {i}")),
+                batch: one(RunEvent::Stderr(format!("line {i}"))),
             });
         }
         // What the renderer would report for a 10-line pane following the tail.
@@ -764,5 +788,57 @@ mod tests {
 
         app.update(ch('z'));
         assert!(app.full_width);
+    }
+
+    #[test]
+    fn panel_keys() {
+        let mut app = app();
+        select(&mut app, "vfs_latency_demo.bt");
+        app.update(key(KeyCode::Enter));
+        let (run_id, _) = start_cmd(&app.update(key(KeyCode::Enter)));
+        let t0 = Instant::now();
+        app.update(Msg::RunStarted { run_id, at: t0 });
+        let lines = [
+            r#"{"type":"map","data":{"@m":{"a":1,"b":2}}}"#,
+            r#"{"type":"hist","data":{"@h":{"x":[{"min":0,"max":0,"count":1}],"y":[{"min":0,"max":0,"count":2}]}}}"#,
+        ];
+        for line in lines {
+            for msg in crate::bpftrace::json::parse_line(line) {
+                app.update(Msg::Run {
+                    run_id,
+                    at: t0,
+                    batch: one(RunEvent::Output(msg)),
+                });
+            }
+        }
+        let focused = |app: &App| {
+            app.run
+                .as_ref()
+                .and_then(|r| r.panels.focused())
+                .map(|p| p.name.clone())
+        };
+        assert_eq!(focused(&app).as_deref(), Some("@m"));
+        app.update(ch('s'));
+        assert!(app.run.as_ref().is_some_and(|r| r.panels.list[0].sort_by_key));
+        app.update(key(KeyCode::Tab));
+        assert_eq!(focused(&app).as_deref(), Some("@h"));
+        app.update(ch(']'));
+        assert_eq!(
+            app.run
+                .as_ref()
+                .and_then(|r| r.panels.list[1].key.clone())
+                .as_deref(),
+            Some("y")
+        );
+        app.update(ch('['));
+        assert_eq!(
+            app.run
+                .as_ref()
+                .and_then(|r| r.panels.list[1].key.clone())
+                .as_deref(),
+            Some("x")
+        );
+        app.update(key(KeyCode::BackTab));
+        assert_eq!(focused(&app).as_deref(), Some("@m"));
     }
 }
