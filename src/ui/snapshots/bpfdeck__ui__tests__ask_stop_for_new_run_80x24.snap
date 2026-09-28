@@ -1,18 +1,18 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 398
+assertion_line: 429
 expression: "render(&app, 80, 24)"
 ---
 "╭ Scripts (8) ─────────────╮╭ 1 Info │ 2 Source │ 3 Validation ────────────────╮"
 "│✗ missing_probe_demo  Atta││Count syscalls by process name, printed every     │"
-"│● net/tcpconnect_demo  Pri││second.                                           │"
-"│● no_header               ││                                                  │"
-"│● params_demo  Positional ││Status   ● runs here (dry-run)                    │"
-"│… shebang_no_ext  Discover││File     /srv/bpf/syscount_demo.bt  (310 bytes)   │"
-"│● syscount_demo  Count sys││Usage    USAGE: syscount_demo.bt                  │"
-"│! unsafe_demo  Uses system││Probes   ✓ tracepoint:raw_syscalls:sys_enter      │"
-"│▶ vfs_latency_demo  vfs_re││         · interval:s:1  (always available)       │"
-"│       ╭ Confirm ─────────────────────────────────────────────────────╮       │"
+"│▾ net/  1                 ││second.                                           │"
+"│  ● tcpconnect_demo  Print││                                                  │"
+"│● no_header               ││Status   ● runs here (dry-run)                    │"
+"│● params_demo  Positional ││File     /srv/bpf/syscount_demo.bt  (310 bytes)   │"
+"│… shebang_no_ext  Discover││Usage    USAGE: syscount_demo.bt                  │"
+"│● syscount_demo  Count sys││Probes   ✓ tracepoint:raw_syscalls:sys_enter      │"
+"│! unsafe_demo  Uses system││         · interval:s:1  (always available)       │"
+"│▶ vfs_l╭ Confirm ─────────────────────────────────────────────────────╮       │"
 "│       │vfs_latency_demo.bt is still running. Stop it?                │       │"
 "│       │                                                              │       │"
 "│       │y yes   n no                                                  │       │"

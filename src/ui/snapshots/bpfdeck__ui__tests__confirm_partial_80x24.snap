@@ -1,18 +1,18 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 355
+assertion_line: 374
 expression: "render(&app, 80, 24)"
 ---
 "╭ Scripts (8) ─────────────╮╭ 1 Info │ 2 Source │ 3 Validation ────────────────╮"
 "│✗ missing_probe_demo  Atta││vfs_read latency as a log2 histogram (usecs).     │"
-"│● net/tcpconnect_demo  Pri││                                                  │"
-"│● no_header               ││Status   ◐ 1/2 probes found (probe listing,       │"
-"│● params_demo  Positional ││heuristic)                                        │"
-"│… shebang_no_ext  Discover││File     /srv/bpf/vfs_latency_demo.bt  (382 bytes)│"
-"│● syscount_demo  Count sys││Probes   · BEGIN  (always available)              │"
-"│! unsafe_demo  Uses system││         ✓ kprobe:vfs_read                        │"
-"│◐╭ Run vfs_latency_demo.bt ─────────────────────────────────────────────────╮ │"
-"│ │Path      /srv/bpf/vfs_latency_demo.bt                                    │ │"
+"│▾ net/  1                 ││                                                  │"
+"│  ● tcpconnect_demo  Print││Status   ◐ 1/2 probes found (probe listing,       │"
+"│● no_header               ││heuristic)                                        │"
+"│● params_demo  Positional ││File     /srv/bpf/vfs_latency_demo.bt  (382 bytes)│"
+"│… shebang_no_ext  Discover││Probes   · BEGIN  (always available)              │"
+"│● syscount_demo  Count sys││         ✓ kprobe:vfs_read                        │"
+"│!╭ Run vfs_latency_demo.bt ─────────────────────────────────────────────────╮ │"
+"│◐│Path      /srv/bpf/vfs_latency_demo.bt                                    │ │"
 "│ │Command   /usr/bin/bpftrace -f json -B line --                            │ │"
 "│ │/srv/bpf/vfs_latency_demo.bt                                              │ │"
 "│ │Probes    BEGIN, kprobe:vfs_read, kretprobe:vfs_read, END                 │ │"

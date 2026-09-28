@@ -1,18 +1,18 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 378
+assertion_line: 380
 expression: "render(&app, 120, 40)"
 ---
 "╭ Scripts (8) ─────────────────────╮▶ vfs_latency_demo.bt  running  00:12                                               "
 "│✗ missing_probe_demo  Attaches to │  probes 3  errors 1  dropped 0                                                     "
-"│● net/tcpconnect_demo  Print TCP c│╭ @syscalls │ @usecs · table ─────────────────────────────────── 2 updates · 00:00 ╮"
-"│● no_header                       ││key  value▼                                                                       │"
-"│● params_demo  Positional and name││node    290 ↓ ████████████████████████████████████████████████████████████████████│"
-"│… shebang_no_ext  Discovered via s││sshd     55 ↑ ████████████▉                                                       │"
-"│● syscount_demo  Count syscalls by││curl      7 + █▋                                                                  │"
-"│! unsafe_demo  Uses system(); requ││bash      3 ↓ ▋                                                                   │"
+"│▾ net/  1                         │╭ @syscalls │ @usecs · table ─────────────────────────────────── 2 updates · 00:00 ╮"
+"│  ● tcpconnect_demo  Print TCP con││key  value▼                                                                       │"
+"│● no_header                       ││node    290 ↓ ████████████████████████████████████████████████████████████████████│"
+"│● params_demo  Positional and name││sshd     55 ↑ ████████████▉                                                       │"
+"│… shebang_no_ext  Discovered via s││curl      7 + █▋                                                                  │"
+"│● syscount_demo  Count syscalls by││bash      3 ↓ ▋                                                                   │"
+"│! unsafe_demo  Uses system(); requ││                                                                                  │"
 "│▶ vfs_latency_demo  vfs_read laten││                                                                                  │"
-"│                                  ││                                                                                  │"
 "│                                  ││                                                                                  │"
 "│                                  ││                                                                                  │"
 "│                                  ││                                                                                  │"

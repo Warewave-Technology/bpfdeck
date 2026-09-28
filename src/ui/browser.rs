@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, BorderType, List, ListItem, ListState, Paragraph, 
 
 use super::source_view;
 use super::theme::Theme;
+use crate::app::tree::ListRow;
 use crate::app::{App, BpftraceState, Entry, LoadState, Screen, TABS, ValidationState};
 use crate::bpftrace::validate::{Strategy, Validation, Verdict};
 
@@ -90,10 +91,22 @@ pub fn draw_list(frame: &mut Frame, area: Rect, app: &App) {
                 .as_ref()
                 .filter(|r| r.is_active())
                 .map(|r| r.script_id.as_str());
+            let tree = app.showing_tree();
             let items: Vec<ListItem> = app
-                .visible
+                .rows
                 .iter()
-                .map(|&i| list_row(&app.entries[i], running == Some(app.entries[i].id())))
+                .map(|row| match row {
+                    ListRow::Script { entry, depth } => {
+                        let e = &app.entries[*entry];
+                        list_row(e, running == Some(e.id()), tree.then_some(*depth))
+                    }
+                    ListRow::Dir {
+                        path,
+                        depth,
+                        expanded,
+                        scripts,
+                    } => dir_row(path, *depth, *expanded, *scripts),
+                })
                 .collect();
             let list = List::new(items).highlight_style(Theme::selected());
             let mut state = ListState::default().with_selected(Some(app.cursor));
@@ -113,8 +126,20 @@ pub fn draw_list(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
+/// `▾ tools/  45` (or `▸` when collapsed), indented by depth.
+fn dir_row(path: &str, depth: usize, expanded: bool, scripts: usize) -> ListItem<'static> {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    ListItem::new(Line::from(vec![
+        Span::raw("  ".repeat(depth)),
+        Span::styled(if expanded { "▾ " } else { "▸ " }, Theme::key_hint()),
+        Span::styled(format!("{name}/"), Theme::label()),
+        Span::styled(format!("  {scripts}"), Theme::muted()),
+    ]))
+}
+
 /// `● net/tcpconnect_demo  Description.  (reason)`, the directory dimmed; `▶` while running.
-fn list_row(entry: &Entry, running: bool) -> ListItem<'static> {
+/// In tree view (`depth` set) the row is indented and the directory is implied.
+fn list_row(entry: &Entry, running: bool, depth: Option<usize>) -> ListItem<'static> {
     let (g, style) = if running {
         ("▶", Theme::running())
     } else {
@@ -122,11 +147,13 @@ fn list_row(entry: &Entry, running: bool) -> ListItem<'static> {
     };
     let id = entry.id();
     let (dir, name) = match id.rsplit_once('/') {
+        Some(_) if depth.is_some() => (String::new(), id.rsplit('/').next().unwrap_or(id)),
         Some((dir, name)) => (format!("{dir}/"), name),
         None => (String::new(), id),
     };
     let name = name.strip_suffix(".bt").unwrap_or(name).to_string();
     let mut spans = vec![
+        Span::raw("  ".repeat(depth.unwrap_or(0))),
         Span::styled(g, style),
         Span::raw(" "),
         Span::styled(dir, Theme::muted()),
@@ -173,8 +200,12 @@ pub fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
         .border_style(Theme::border())
         .title(tabs);
     // The selected ID on the right, when it fits next to the tabs (it is in the list anyway).
-    if let Some(entry) = app.selected() {
-        let id = Line::styled(format!(" {} ", entry.id()), Theme::muted()).right_aligned();
+    let title_id = match app.selected_row() {
+        Some(ListRow::Dir { path, .. }) => Some(format!("{path}/")),
+        _ => app.selected().map(|e| e.id().to_string()),
+    };
+    if let Some(title_id) = title_id {
+        let id = Line::styled(format!(" {title_id} "), Theme::muted()).right_aligned();
         if tabs_width + id.width() + 4 <= usize::from(area.width) {
             block = block.title(id);
         }
@@ -182,6 +213,13 @@ pub fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    if let Some(ListRow::Dir { path, scripts, .. }) = app.selected_row() {
+        frame.render_widget(
+            Paragraph::new(dir_lines(app, path, *scripts)).wrap(Wrap { trim: false }),
+            inner,
+        );
+        return;
+    }
     let Some(entry) = app.selected() else {
         let msg = if matches!(app.load, LoadState::Ready) {
             "no script selected"
@@ -415,5 +453,47 @@ fn validation_lines(entry: &Entry) -> Vec<Line<'static>> {
     } else {
         lines.extend(v.output.lines().map(|l| Line::raw(l.replace('\t', "    "))));
     }
+    lines
+}
+
+/// Detail pane for a directory row: how many scripts, and how they validated.
+fn dir_lines(app: &App, path: &str, scripts: usize) -> Vec<Line<'static>> {
+    let prefix = format!("{path}/");
+    let mut counts: Vec<(&'static str, Style, &'static str, usize)> = vec![
+        ("●", Theme::ok(), "run here", 0),
+        ("◐", Theme::warn(), "partially (probes missing)", 0),
+        ("!", Theme::warn(), "need --unsafe", 0),
+        ("✗", Theme::error(), "cannot run here", 0),
+        ("…", Theme::muted(), "still validating", 0),
+        ("?", Theme::muted(), "not validated", 0),
+    ];
+    for e in app.entries.iter().filter(|e| e.id().starts_with(&prefix)) {
+        let (g, _) = glyph(&e.validation);
+        if let Some(c) = counts.iter_mut().find(|c| c.0 == g) {
+            c.3 += 1;
+        }
+    }
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(prefix.clone(), Theme::title()),
+            Span::styled(
+                format!("  {scripts} script{}", if scripts == 1 { "" } else { "s" }),
+                Theme::muted(),
+            ),
+        ]),
+        Line::raw(""),
+    ];
+    lines.extend(counts.into_iter().filter(|c| c.3 > 0).map(|(g, style, what, n)| {
+        Line::from(vec![Span::styled(format!("{g} {n:>4} "), style), Span::raw(what)])
+    }));
+    lines.push(Line::raw(""));
+    lines.push(Line::from(vec![
+        Span::styled("Enter", Theme::key_hint()),
+        Span::styled(" open/close  ", Theme::muted()),
+        Span::styled("← →", Theme::key_hint()),
+        Span::styled(" collapse / expand  ", Theme::muted()),
+        Span::styled("t", Theme::key_hint()),
+        Span::styled(" flat list", Theme::muted()),
+    ]));
     lines
 }

@@ -1,19 +1,19 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 274
+assertion_line: 276
 expression: "render(&ready_app(host(Privilege::None, Lockdown::Integrity)), 80, 24)"
 ---
 "   Kernel lockdown (integrity): bpftrace cannot load BPF programs on this host  "
 "╭ Scripts (8) ─────────────╮╭ 1 Info │ 2 Source │ 3 Validation ────────────────╮"
 "│✗ missing_probe_demo  Atta││Attaches to a kernel function that does not exist.│"
-"│● net/tcpconnect_demo  Pri││                                                  │"
-"│● no_header               ││Status   ✗ cannot run here: stdin:1:1-44: ERROR:  │"
-"│● params_demo  Positional ││kprobe:this_function_does_not_exist_bpfdeck: No   │"
-"│… shebang_no_ext  Discover││such file (dry-run)                               │"
-"│● syscount_demo  Count sys││File     /srv/bpf/missing_probe_demo.bt  (232     │"
-"│! unsafe_demo  Uses system││bytes)                                            │"
-"│◐ vfs_latency_demo  vfs_re││Probes   ✗                                        │"
-"│                          ││kprobe:this_function_does_not_exist_bpfdeck       │"
+"│▾ net/  1                 ││                                                  │"
+"│  ● tcpconnect_demo  Print││Status   ✗ cannot run here: stdin:1:1-44: ERROR:  │"
+"│● no_header               ││kprobe:this_function_does_not_exist_bpfdeck: No   │"
+"│● params_demo  Positional ││such file (dry-run)                               │"
+"│… shebang_no_ext  Discover││File     /srv/bpf/missing_probe_demo.bt  (232     │"
+"│● syscount_demo  Count sys││bytes)                                            │"
+"│! unsafe_demo  Uses system││Probes   ✗                                        │"
+"│◐ vfs_latency_demo  vfs_re││kprobe:this_function_does_not_exist_bpfdeck       │"
 "│                          ││Params   none                                     │"
 "│                          ││                                                  │"
 "│                          ││                                                  │"

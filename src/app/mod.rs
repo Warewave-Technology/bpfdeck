@@ -2,8 +2,10 @@
 
 mod filter;
 mod run;
+pub mod tree;
 
 use std::cell::Cell;
+use std::collections::HashSet;
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
@@ -18,8 +20,12 @@ use crate::source::{Origin, ResolvedSource, SourceSpec};
 use crate::sys::SystemInfo;
 use filter::Fuzzy;
 pub use run::{Ask, Confirm, LogView};
+use tree::ListRow;
 
 pub const TABS: [&str; 3] = ["Info", "Source", "Validation"];
+/// Above this many scripts the tree starts with its top-level directories collapsed, so
+/// the first screen is an overview (bpftrace's repo: `src/ 7`, `tests/ 41`, `tools/ 45`).
+const COLLAPSE_ABOVE: usize = 30;
 /// Lines moved by one detail scroll step.
 const SCROLL_STEP: u16 = 10;
 
@@ -100,10 +106,18 @@ pub struct App {
     pub entries: Vec<Entry>,
     pub host: Option<SystemInfo>,
     pub bpftrace: BpftraceState,
-    /// Indices into `entries`, in display order (filtered and ranked).
+    /// Indices into `entries` matching the filter, in display order (ranked).
     pub visible: Vec<usize>,
-    /// Position in `visible`.
+    /// What the list shows: scripts, and directory rows in tree view.
+    pub rows: Vec<ListRow>,
+    /// Position in `rows`.
     pub cursor: usize,
+    /// Tree view (`t`); the filter always shows a flat ranked list.
+    pub tree: bool,
+    /// Collapsed directories (relative paths) in tree view.
+    pub collapsed: HashSet<String>,
+    /// The user toggled the view: don't pick one automatically on the next load.
+    view_chosen: bool,
     pub query: String,
     /// Typing into the list filter.
     pub filter_editing: bool,
@@ -135,7 +149,11 @@ impl App {
             host: None,
             bpftrace: BpftraceState::Detecting,
             visible: Vec::new(),
+            rows: Vec::new(),
             cursor: 0,
+            tree: false,
+            collapsed: HashSet::new(),
+            view_chosen: false,
             query: String::new(),
             filter_editing: false,
             screen: Screen::Browser,
@@ -164,8 +182,30 @@ impl App {
         ]
     }
 
+    /// The script under the cursor (`None` on a directory row).
     pub fn selected(&self) -> Option<&Entry> {
-        self.visible.get(self.cursor).and_then(|&i| self.entries.get(i))
+        match self.rows.get(self.cursor)? {
+            ListRow::Script { entry, .. } => self.entries.get(*entry),
+            ListRow::Dir { .. } => None,
+        }
+    }
+
+    pub fn selected_row(&self) -> Option<&ListRow> {
+        self.rows.get(self.cursor)
+    }
+
+    /// Whether the list currently shows the tree (tree view and no filter).
+    pub fn showing_tree(&self) -> bool {
+        self.tree && self.query.is_empty()
+    }
+
+    fn ids(&self) -> Vec<&str> {
+        self.entries.iter().map(Entry::id).collect()
+    }
+
+    fn current_key(&self) -> Option<String> {
+        let ids = self.ids();
+        self.selected_row().map(|r| r.key(&ids))
     }
 
     pub fn context(&self) -> Context {
@@ -274,7 +314,8 @@ impl App {
                 return Vec::new();
             }
         };
-        let keep = self.selected().map(|e| e.id().to_string());
+        let keep = self.current_key();
+        let first_load = self.source.is_none();
         let pending = match &self.bpftrace {
             BpftraceState::Missing(reason) => ValidationState::Skipped(reason.clone()),
             _ => ValidationState::Pending,
@@ -290,6 +331,17 @@ impl App {
             .collect();
         self.source = Some(catalog.source);
         self.load = LoadState::Ready;
+        // Scripts spread over directories (like bpftrace/tools + tests) read better as a tree.
+        if !self.view_chosen {
+            self.tree = self.entries.iter().any(|e| e.id().contains('/'));
+        }
+        if first_load && self.entries.len() > COLLAPSE_ABOVE {
+            self.collapsed = self
+                .entries
+                .iter()
+                .filter_map(|e| e.id().split_once('/').map(|(top, _)| top.to_string()))
+                .collect();
+        }
         match catalog.warnings.as_slice() {
             [] => {}
             [one] => self.notify(Level::Warn, one.clone()),
@@ -392,7 +444,7 @@ impl App {
             Action::Down => self.move_cursor(1),
             Action::Up => self.move_cursor(-1),
             Action::Top => self.set_cursor(0),
-            Action::Bottom => self.set_cursor(self.visible.len().saturating_sub(1)),
+            Action::Bottom => self.set_cursor(self.rows.len().saturating_sub(1)),
             Action::NextTab => self.set_tab((self.tab + 1) % TABS.len()),
             Action::PrevTab => self.set_tab((self.tab + TABS.len() - 1) % TABS.len()),
             Action::Tab(n) => self.set_tab(n.min(TABS.len() - 1)),
@@ -404,7 +456,7 @@ impl App {
                 self.filter_editing = false;
                 if !self.query.is_empty() {
                     self.query.clear();
-                    let keep = self.selected().map(|e| e.id().to_string());
+                    let keep = self.current_key();
                     self.refilter(keep.as_deref());
                 }
             }
@@ -414,7 +466,22 @@ impl App {
                 self.help_scroll.set(0);
                 self.overlay = Some(Overlay::Help);
             }
-            Action::Run => return self.request_run(),
+            Action::Run => {
+                if let Some(ListRow::Dir { path, .. }) = self.selected_row() {
+                    let path = path.clone();
+                    self.toggle_dir(&path);
+                } else {
+                    return self.request_run();
+                }
+            }
+            Action::ToggleTree => {
+                self.tree = !self.tree;
+                self.view_chosen = true;
+                let keep = self.current_key();
+                self.rebuild_rows(keep.as_deref());
+            }
+            Action::Collapse => self.collapse(),
+            Action::Expand => self.expand(),
             Action::ShowRun => {
                 if self.run.is_some() {
                     self.screen = Screen::Run;
@@ -459,7 +526,7 @@ impl App {
     }
 
     fn move_cursor(&mut self, delta: isize) {
-        let last = self.visible.len().saturating_sub(1);
+        let last = self.rows.len().saturating_sub(1);
         self.set_cursor(self.cursor.saturating_add_signed(delta).min(last));
     }
 
@@ -489,8 +556,87 @@ impl App {
             })
             .collect();
         self.visible = self.fuzzy.rank(&self.query, haystacks.iter().map(String::as_str));
-        let pos = keep.and_then(|id| self.visible.iter().position(|&i| self.entries[i].id() == id));
+        self.rebuild_rows(keep);
+    }
+
+    /// Recompute `rows`; keep the row with key `keep` (see `ListRow::key`) selected, or the
+    /// script it belongs to, else the first row.
+    fn rebuild_rows(&mut self, keep: Option<&str>) {
+        // A kept script must stay reachable: open the directories above it.
+        if self.showing_tree()
+            && let Some(id) = keep.and_then(|k| k.strip_prefix("s:"))
+        {
+            let dirs: Vec<String> = id.match_indices('/').map(|(i, _)| id[..i].to_string()).collect();
+            for dir in dirs {
+                self.collapsed.remove(&dir);
+            }
+        }
+        self.rows = if self.showing_tree() {
+            let ids = self.ids();
+            let scripts: Vec<(usize, &str)> = self.visible.iter().map(|&i| (i, ids[i])).collect();
+            tree::tree_rows(&scripts, &self.collapsed)
+        } else {
+            tree::flat_rows(&self.visible)
+        };
+        let ids = self.ids();
+        let pos = keep.and_then(|k| {
+            self.rows.iter().position(|r| r.key(&ids) == k).or_else(|| {
+                // A directory that is not shown (flat list): its first script instead.
+                let dir = format!("{}/", k.strip_prefix("d:")?);
+                self.rows
+                    .iter()
+                    .position(|r| r.key(&ids).starts_with(&format!("s:{dir}")))
+            })
+        });
         self.set_cursor(pos.unwrap_or(0));
+    }
+
+    fn toggle_dir(&mut self, path: &str) {
+        if !self.collapsed.remove(path) {
+            self.collapsed.insert(path.to_string());
+        }
+        self.rebuild_rows(Some(&format!("d:{path}")));
+    }
+
+    /// `←`: collapse the directory under the cursor, else jump to the parent directory.
+    fn collapse(&mut self) {
+        if !self.showing_tree() {
+            return;
+        }
+        match self.selected_row() {
+            Some(ListRow::Dir {
+                path, expanded: true, ..
+            }) => {
+                let path = path.clone();
+                self.toggle_dir(&path);
+            }
+            Some(row) => {
+                let ids = self.ids();
+                if let Some(parent) = tree::parent(row, &ids) {
+                    let key = format!("d:{parent}");
+                    if let Some(pos) = self.rows.iter().position(|r| r.key(&ids) == key) {
+                        self.set_cursor(pos);
+                    }
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// `→`: expand the directory under the cursor, or step into an expanded one.
+    fn expand(&mut self) {
+        match self.selected_row() {
+            Some(ListRow::Dir {
+                path,
+                expanded: false,
+                ..
+            }) => {
+                let path = path.clone();
+                self.toggle_dir(&path);
+            }
+            Some(ListRow::Dir { expanded: true, .. }) => self.move_cursor(1),
+            _ => {}
+        }
     }
 
     fn notify(&mut self, level: Level, text: String) {
@@ -755,6 +901,9 @@ mod tests {
         assert_eq!(app.selected().map(Entry::id), Some("missing_probe_demo.bt"));
         app.update(ch('j'));
         app.update(key(KeyCode::Down));
+        // Tree view: the `net/` directory row sits between them.
+        assert_eq!(app.selected().map(Entry::id), Some("net/tcpconnect_demo.bt"));
+        app.update(ch('j'));
         assert_eq!(app.selected().map(Entry::id), Some("no_header.bt"));
         app.update(ch('G'));
         assert_eq!(app.selected().map(Entry::id), Some("vfs_latency_demo.bt"));
@@ -922,5 +1071,120 @@ mod tests {
             notes: Vec::new(),
             probes: Vec::new(),
         }
+    }
+
+    fn row_keys(app: &App) -> Vec<String> {
+        let ids: Vec<&str> = app.entries.iter().map(Entry::id).collect();
+        app.rows.iter().map(|r| r.key(&ids)).collect()
+    }
+
+    #[test]
+    fn tree_view_is_the_default_with_subdirectories() {
+        let app = ready_app(host(Privilege::Root, Lockdown::None));
+        assert!(app.tree && app.showing_tree());
+        assert_eq!(
+            row_keys(&app)[..3],
+            ["s:missing_probe_demo.bt", "d:net", "s:net/tcpconnect_demo.bt"]
+        );
+
+        // A flat catalog stays flat.
+        let mut flat = catalog();
+        flat.scripts.retain(|s| !s.file.id.contains('/'));
+        let mut app = App::new("x".into());
+        app.init();
+        app.update(Msg::Loaded(Ok(flat)));
+        assert!(!app.tree);
+    }
+
+    #[test]
+    fn tree_navigation_collapse_and_expand() {
+        let mut app = ready_app(host(Privilege::Root, Lockdown::None));
+        app.update(ch('j')); // on `net/`
+        assert!(app.selected().is_none(), "a directory row has no script");
+        assert!(
+            app.update(key(KeyCode::Enter)).is_empty(),
+            "Enter on a directory toggles it"
+        );
+        assert_eq!(app.rows.len(), 8, "net/ collapsed: 7 top-level scripts + the dir");
+        assert_eq!(app.update(ch('e')), vec![], "no editor for a directory");
+        app.update(key(KeyCode::Right));
+        assert_eq!(app.rows.len(), 9);
+        app.update(key(KeyCode::Right)); // step into the expanded dir
+        assert_eq!(app.selected().map(Entry::id), Some("net/tcpconnect_demo.bt"));
+        app.update(ch('h')); // on a script: go to its directory
+        assert_eq!(row_keys(&app)[app.cursor], "d:net");
+        app.update(key(KeyCode::Left)); // on an expanded dir: collapse it
+        assert!(app.collapsed.contains("net"));
+        assert_eq!(row_keys(&app)[app.cursor], "d:net", "selection stays on the dir");
+
+        // Rescans keep the collapsed state and the view.
+        app.update(Msg::Loaded(Ok(catalog())));
+        assert!(app.collapsed.contains("net") && app.tree);
+
+        // `t` switches to the flat list and back, keeping the selection.
+        app.update(ch('j'));
+        let before = app.selected().map(|e| e.id().to_string());
+        app.update(ch('t'));
+        assert!(!app.tree);
+        app.update(ch('t'));
+        app.update(ch('t'));
+        assert_eq!(app.rows.len(), 8);
+        assert_eq!(app.selected().map(|e| e.id().to_string()), before);
+        app.update(Msg::Loaded(Ok(catalog())));
+        assert!(!app.tree, "an explicit choice survives rescans");
+    }
+
+    #[test]
+    fn large_trees_start_collapsed() {
+        let mut big = catalog();
+        let template = big.scripts[0].clone();
+        for i in 0..40 {
+            let mut s = template.clone();
+            s.file.id = format!("tools/t{i:02}.bt");
+            big.scripts.push(s);
+        }
+        big.scripts.sort_by(|a, b| a.file.id.cmp(&b.file.id));
+        let mut app = App::new("x".into());
+        app.init();
+        app.update(Msg::Loaded(Ok(big.clone())));
+        let keys = row_keys(&app);
+        assert!(keys.contains(&"d:tools".to_string()) && keys.contains(&"d:net".to_string()));
+        assert_eq!(keys.len(), 9, "7 root scripts + net/ + tools/, both collapsed");
+        // Only the first load decides; a rescan keeps what the user opened.
+        app.collapsed.clear();
+        app.update(Msg::Loaded(Ok(big)));
+        assert_eq!(row_keys(&app).len(), 50);
+    }
+
+    #[test]
+    fn flat_list_from_a_directory_row_selects_its_first_script() {
+        let mut app = ready_app(host(Privilege::Root, Lockdown::None));
+        app.update(ch('j'));
+        app.update(key(KeyCode::Left)); // net/ collapsed, cursor on it
+        app.update(ch('t'));
+        assert_eq!(app.selected().map(Entry::id), Some("net/tcpconnect_demo.bt"));
+    }
+
+    #[test]
+    fn filter_is_flat_and_clearing_it_reveals_the_match() {
+        let mut app = ready_app(host(Privilege::Root, Lockdown::None));
+        app.collapsed.insert("net".into());
+        app.update(ch('t'));
+        app.update(ch('t')); // rebuild with net/ collapsed
+        assert!(!row_keys(&app).contains(&"s:net/tcpconnect_demo.bt".to_string()));
+        app.update(ch('/'));
+        for c in "tcpconn".chars() {
+            app.update(ch(c));
+        }
+        assert!(!app.showing_tree());
+        assert_eq!(app.selected().map(Entry::id), Some("net/tcpconnect_demo.bt"));
+        app.update(key(KeyCode::Esc));
+        assert!(app.showing_tree());
+        assert_eq!(
+            app.selected().map(Entry::id),
+            Some("net/tcpconnect_demo.bt"),
+            "its dir was opened"
+        );
+        assert!(!app.collapsed.contains("net"));
     }
 }

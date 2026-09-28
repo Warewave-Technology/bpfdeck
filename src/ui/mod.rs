@@ -430,6 +430,22 @@ mod tests {
     }
 
     #[test]
+    fn tree_dir_selected_80x24() {
+        let mut app = ready();
+        keys(&mut app, &[KeyCode::Char('j')]);
+        insta::assert_snapshot!(render(&app, 80, 24));
+    }
+
+    #[test]
+    fn tree_collapsed_and_flat_120x40() {
+        let mut app = ready();
+        keys(&mut app, &[KeyCode::Char('j'), KeyCode::Left]);
+        insta::assert_snapshot!("tree_collapsed_120x40", render(&app, 120, 40));
+        keys(&mut app, &[KeyCode::Char('t')]);
+        insta::assert_snapshot!("flat_list_120x40", render(&app, 120, 40));
+    }
+
+    #[test]
     fn too_small() {
         insta::assert_snapshot!(render(&ready(), 79, 24));
     }

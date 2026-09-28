@@ -83,6 +83,9 @@ pub enum Action {
     NextKey,
     ToggleSort,
     Export,
+    ToggleTree,
+    Collapse,
+    Expand,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -139,7 +142,7 @@ const fn bind(
 }
 
 use Context::{Ask, Browser, Confirm, Filter, Form, Help, LogFilter, Run};
-use KeyCode::{BackTab, Down, End, Enter, Esc, Home, PageDown, PageUp, Tab, Up};
+use KeyCode::{BackTab, Down, End, Enter, Esc, Home, Left, PageDown, PageUp, Right, Tab, Up};
 
 #[rustfmt::skip]
 pub const BINDINGS: &[Binding] = &[
@@ -147,8 +150,11 @@ pub const BINDINGS: &[Binding] = &[
     bind(Browser, &[ch('k'), key(Up)], "k/↑", Action::Up, "previous script", None),
     bind(Browser, &[ch('g'), key(Home)], "g/Home", Action::Top, "first script", None),
     bind(Browser, &[ch('G'), key(End)], "G/End", Action::Bottom, "last script", None),
-    bind(Browser, &[key(Enter)], "Enter", Action::Run, "run script / show its run", Some("run")),
+    bind(Browser, &[key(Enter)], "Enter", Action::Run, "run script / open dir", Some("run")),
     bind(Browser, &[ch('o')], "o", Action::ShowRun, "show last run output", None),
+    bind(Browser, &[ch('t')], "t", Action::ToggleTree, "tree / flat list", None),
+    bind(Browser, &[ch('h'), key(Left)], "h/←", Action::Collapse, "collapse dir / go to parent", None),
+    bind(Browser, &[ch('l'), key(Right)], "l/→", Action::Expand, "expand dir", None),
     bind(Browser, &[key(Tab)], "Tab", Action::NextTab, "next detail tab", None),
     bind(Browser, &[key(BackTab)], "S-Tab", Action::PrevTab, "previous detail tab", None),
     bind(Browser, &[ch('1')], "1", Action::Tab(0), "Info tab", None),

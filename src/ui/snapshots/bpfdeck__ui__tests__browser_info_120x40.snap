@@ -1,18 +1,18 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 196
+assertion_line: 198
 expression: "render(&app, 120, 40)"
 ---
 "╭ Scripts (8) ───────────────────────────╮╭ 1 Info │ 2 Source │ 3 Validation ───────────────────── vfs_latency_demo.bt ╮"
 "│✗ missing_probe_demo  Attaches to a kern││vfs_read latency as a log2 histogram (usecs).                               │"
-"│● net/tcpconnect_demo  Print TCP connect││                                                                            │"
-"│● no_header                             ││Status   ◐ 1/2 probes found (probe listing, heuristic)                      │"
-"│● params_demo  Positional and named para││File     /srv/bpf/vfs_latency_demo.bt  (382 bytes)                          │"
-"│… shebang_no_ext  Discovered via shebang││Probes   · BEGIN  (always available)                                        │"
-"│● syscount_demo  Count syscalls by proce││         ✓ kprobe:vfs_read                                                  │"
-"│! unsafe_demo  Uses system(); requires -││         ✗ kretprobe:vfs_read                                               │"
-"│◐ vfs_latency_demo  vfs_read latency as ││         · END  (always available)                                          │"
-"│                                        ││Params   none                                                               │"
+"│▾ net/  1                               ││                                                                            │"
+"│  ● tcpconnect_demo  Print TCP connect()││Status   ◐ 1/2 probes found (probe listing, heuristic)                      │"
+"│● no_header                             ││File     /srv/bpf/vfs_latency_demo.bt  (382 bytes)                          │"
+"│● params_demo  Positional and named para││Probes   · BEGIN  (always available)                                        │"
+"│… shebang_no_ext  Discovered via shebang││         ✓ kprobe:vfs_read                                                  │"
+"│● syscount_demo  Count syscalls by proce││         ✗ kretprobe:vfs_read                                               │"
+"│! unsafe_demo  Uses system(); requires -││         · END  (always available)                                          │"
+"│◐ vfs_latency_demo  vfs_read latency as ││Params   none                                                               │"
 "│                                        ││                                                                            │"
 "│                                        ││                                                                            │"
 "│                                        ││                                                                            │"

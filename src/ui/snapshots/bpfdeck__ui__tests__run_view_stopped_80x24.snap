@@ -1,18 +1,18 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 406
+assertion_line: 408
 expression: "render(&app, 80, 24)"
 ---
 "╭ Scripts (8) ─────────╮✓ vfs_latency_demo.bt  exited(0)  00:13                 "
 "│✗ missing_probe_demo  │  probes 3  errors 1  dropped 0                         "
-"│● net/tcpconnect_demo │╭ @syscalls │ @usecs · hist ──────── 2 updates · 00:00 ╮"
-"│● no_header           ││[16, 32) 421 ████████████████████████████████████████ │"
-"│● params_demo  Positio││total 421                                             │"
+"│▾ net/  1             │╭ @syscalls │ @usecs · hist ──────── 2 updates · 00:00 ╮"
+"│  ● tcpconnect_demo  P││[16, 32) 421 ████████████████████████████████████████ │"
+"│● no_header           ││total 421                                             │"
+"│● params_demo  Positio││                                                      │"
 "│… shebang_no_ext  Disc││                                                      │"
 "│● syscount_demo  Count││                                                      │"
 "│! unsafe_demo  Uses sy││                                                      │"
 "│◐ vfs_latency_demo  vf││                                                      │"
-"│                      ││                                                      │"
 "│                      ││                                                      │"
 "│                      ││                                                      │"
 "│                      ││                                                      │"

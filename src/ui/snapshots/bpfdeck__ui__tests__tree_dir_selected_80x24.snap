@@ -1,19 +1,19 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 191
-expression: "render(&ready(), 80, 24)"
+assertion_line: 436
+expression: "render(&app, 80, 24)"
 ---
-"╭ Scripts (8) ─────────────╮╭ 1 Info │ 2 Source │ 3 Validation ────────────────╮"
-"│✗ missing_probe_demo  Atta││Attaches to a kernel function that does not exist.│"
+"╭ Scripts (8) ─────────────╮╭ 1 Info │ 2 Source │ 3 Validation ────────── net/ ╮"
+"│✗ missing_probe_demo  Atta││net/  1 script                                    │"
 "│▾ net/  1                 ││                                                  │"
-"│  ● tcpconnect_demo  Print││Status   ✗ cannot run here: stdin:1:1-44: ERROR:  │"
-"│● no_header               ││kprobe:this_function_does_not_exist_bpfdeck: No   │"
-"│● params_demo  Positional ││such file (dry-run)                               │"
-"│… shebang_no_ext  Discover││File     /srv/bpf/missing_probe_demo.bt  (232     │"
-"│● syscount_demo  Count sys││bytes)                                            │"
-"│! unsafe_demo  Uses system││Probes   ✗                                        │"
-"│◐ vfs_latency_demo  vfs_re││kprobe:this_function_does_not_exist_bpfdeck       │"
-"│                          ││Params   none                                     │"
+"│  ● tcpconnect_demo  Print││●    1 run here                                   │"
+"│● no_header               ││                                                  │"
+"│● params_demo  Positional ││Enter open/close  ← → collapse / expand  t flat   │"
+"│… shebang_no_ext  Discover││list                                              │"
+"│● syscount_demo  Count sys││                                                  │"
+"│! unsafe_demo  Uses system││                                                  │"
+"│◐ vfs_latency_demo  vfs_re││                                                  │"
+"│                          ││                                                  │"
 "│                          ││                                                  │"
 "│                          ││                                                  │"
 "│                          ││                                                  │"

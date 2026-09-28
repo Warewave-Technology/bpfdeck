@@ -1,18 +1,18 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 219
+assertion_line: 221
 expression: "render(&app, 120, 40)"
 ---
 "╭ Scripts (8) ───────────────────────────╮╭ 1 Info │ 2 Source │ 3 Validation ───────────────────── vfs_latency_demo.bt ╮"
 "│✗ missing_probe_demo  Attaches to a kern││ 1 #!/usr/bin/env bpftrace                                                  │"
-"│● net/tcpconnect_demo  Print TCP connect││ 2 // vfs_latency_demo.bt    vfs_read latency as a log2 histogram (usecs).  │"
-"│● no_header                             ││ 3 //            Fixture for histogram rendering.                           │"
-"│● params_demo  Positional and named para││ 4                                                                          │"
-"│… shebang_no_ext  Discovered via shebang││ 5 BEGIN                                                                    │"
-"│● syscount_demo  Count syscalls by proce││ 6 {                                                                        │"
-"│! unsafe_demo  Uses system(); requires -││ 7   printf("Tracing vfs_read latency... Hit Ctrl-C to end.\n");            │"
-"│◐ vfs_latency_demo  vfs_read latency as ││ 8 }                                                                        │"
-"│                                        ││ 9                                                                          │"
+"│▾ net/  1                               ││ 2 // vfs_latency_demo.bt    vfs_read latency as a log2 histogram (usecs).  │"
+"│  ● tcpconnect_demo  Print TCP connect()││ 3 //            Fixture for histogram rendering.                           │"
+"│● no_header                             ││ 4                                                                          │"
+"│● params_demo  Positional and named para││ 5 BEGIN                                                                    │"
+"│… shebang_no_ext  Discovered via shebang││ 6 {                                                                        │"
+"│● syscount_demo  Count syscalls by proce││ 7   printf("Tracing vfs_read latency... Hit Ctrl-C to end.\n");            │"
+"│! unsafe_demo  Uses system(); requires -││ 8 }                                                                        │"
+"│◐ vfs_latency_demo  vfs_read latency as ││ 9                                                                          │"
 "│                                        ││10 kprobe:vfs_read                                                          │"
 "│                                        ││11 {                                                                        │"
 "│                                        ││12   @start[tid] = nsecs;                                                   │"
