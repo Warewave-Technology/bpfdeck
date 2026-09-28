@@ -1,16 +1,17 @@
 ---
 source: src/ui/mod.rs
-expression: terminal.backend()
+assertion_line: 238
+expression: "render(&app, 80, 24)"
 ---
-"╭ Scripts ─────────────────╮╭ Detail ──────────────────────────────────────────╮"
-"│source: tests/fixtures/scr││nothing selected                                  │"
+"╭ Scripts ─────────────────╮╭ 1 Info │ 2 Source │ 3 Validation ────────────────╮"
+"│Cannot load the source:   ││                                                  │"
+"│git fetch failed for      ││                                                  │"
+"│https://github.com/bpftrac││                                                  │"
+"│e/bpftrace: fatal: unable ││                                                  │"
+"│to access: Could not      ││                                                  │"
+"│resolve host: github.com  ││                                                  │"
 "│                          ││                                                  │"
-"│                          ││                                                  │"
-"│                          ││                                                  │"
-"│                          ││                                                  │"
-"│                          ││                                                  │"
-"│                          ││                                                  │"
-"│                          ││                                                  │"
+"│r retry                   ││                                                  │"
 "│                          ││                                                  │"
 "│                          ││                                                  │"
 "│                          ││                                                  │"
@@ -25,4 +26,4 @@ expression: terminal.backend()
 "│                          ││                                                  │"
 "│                          ││                                                  │"
 "╰──────────────────────────╯╰──────────────────────────────────────────────────╯"
-" q quit                                                                         "
+" validation disabled: cannot run bpftrace:  no bpftrace · 6.1.0-18-amd64 · root "

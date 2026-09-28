@@ -41,7 +41,7 @@ pub enum Origin {
     Git { spec: GitSpec, outcome: SyncOutcome },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedSource {
     pub origin: Origin,
     /// Directory the script IDs are relative to (canonical).

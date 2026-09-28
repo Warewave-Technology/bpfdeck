@@ -74,4 +74,60 @@ impl Theme {
     pub fn popup_bg() -> Style {
         Style::new().fg(FG).bg(BG0_H)
     }
+    /// Field names in the detail pane ("Probes", "File", …).
+    pub fn label() -> Style {
+        Style::new().fg(FG4).add_modifier(Modifier::BOLD)
+    }
+    pub fn tab_active() -> Style {
+        Style::new().fg(YELLOW).add_modifier(Modifier::BOLD)
+    }
+    pub fn tab_inactive() -> Style {
+        Style::new().fg(GRAY)
+    }
+    /// Persistent full-width warning (kernel lockdown).
+    pub fn banner_error() -> Style {
+        Style::new().fg(BG0_H).bg(RED).add_modifier(Modifier::BOLD)
+    }
+    /// Privilege badge in the status bar.
+    pub fn badge_ok() -> Style {
+        Style::new().fg(GREEN).bg(BG1).add_modifier(Modifier::BOLD)
+    }
+    pub fn badge_warn() -> Style {
+        Style::new().fg(YELLOW).bg(BG1).add_modifier(Modifier::BOLD)
+    }
+    pub fn badge_error() -> Style {
+        Style::new().fg(RED).bg(BG1).add_modifier(Modifier::BOLD)
+    }
+    pub fn notice_info() -> Style {
+        Style::new().fg(AQUA).bg(BG1)
+    }
+    pub fn notice_warn() -> Style {
+        Style::new().fg(YELLOW).bg(BG1)
+    }
+    pub fn notice_error() -> Style {
+        Style::new().fg(RED).bg(BG1).add_modifier(Modifier::BOLD)
+    }
+
+    // Source view (light syntax highlighting).
+    pub fn line_number() -> Style {
+        Style::new().fg(BG3)
+    }
+    pub fn code_comment() -> Style {
+        Style::new().fg(GRAY).add_modifier(Modifier::ITALIC)
+    }
+    pub fn code_string() -> Style {
+        Style::new().fg(GREEN)
+    }
+    pub fn code_probe() -> Style {
+        Style::new().fg(AQUA).add_modifier(Modifier::BOLD)
+    }
+    pub fn code_builtin() -> Style {
+        Style::new().fg(ORANGE)
+    }
+    pub fn code_map() -> Style {
+        Style::new().fg(PURPLE)
+    }
+    pub fn code_var() -> Style {
+        Style::new().fg(BLUE)
+    }
 }
