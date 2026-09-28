@@ -3,6 +3,7 @@
 
 pub mod command;
 pub mod json;
+pub mod runner;
 
 use std::ffi::OsString;
 use std::io;
