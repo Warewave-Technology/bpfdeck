@@ -8,7 +8,7 @@ use ratatui::widgets::{Block, BorderType, List, ListItem, ListState, Paragraph, 
 
 use super::source_view;
 use super::theme::Theme;
-use crate::app::{App, BpftraceState, Entry, LoadState, Mode, TABS, ValidationState};
+use crate::app::{App, BpftraceState, Entry, LoadState, Screen, TABS, ValidationState};
 use crate::bpftrace::validate::{Strategy, Validation, Verdict};
 
 /// Width of the field labels in the Info and Validation tabs.
@@ -29,7 +29,7 @@ pub fn glyph(state: &ValidationState) -> (&'static str, Style) {
 }
 
 pub fn draw_list(frame: &mut Frame, area: Rect, app: &App) {
-    let focused = app.mode != Mode::Help;
+    let focused = app.overlay.is_none() && app.screen == Screen::Browser;
     let count = if app.load != LoadState::Ready {
         " Scripts ".to_string()
     } else if app.query.is_empty() {
@@ -48,7 +48,7 @@ pub fn draw_list(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let show_filter = app.mode == Mode::Filter || !app.query.is_empty();
+    let show_filter = app.filter_editing || !app.query.is_empty();
     let [body, filter] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(u16::from(show_filter))]).areas(inner);
 
@@ -85,7 +85,16 @@ pub fn draw_list(frame: &mut Frame, area: Rect, app: &App) {
             frame.render_widget(Paragraph::new(Line::styled("no matches", Theme::muted())), body);
         }
         LoadState::Ready => {
-            let items: Vec<ListItem> = app.visible.iter().map(|&i| list_row(&app.entries[i])).collect();
+            let running = app
+                .run
+                .as_ref()
+                .filter(|r| r.is_active())
+                .map(|r| r.script_id.as_str());
+            let items: Vec<ListItem> = app
+                .visible
+                .iter()
+                .map(|&i| list_row(&app.entries[i], running == Some(app.entries[i].id())))
+                .collect();
             let list = List::new(items).highlight_style(Theme::selected());
             let mut state = ListState::default().with_selected(Some(app.cursor));
             frame.render_stateful_widget(list, body, &mut state);
@@ -97,16 +106,20 @@ pub fn draw_list(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled("/", Theme::key_hint()),
             Span::raw(app.query.as_str()),
         ];
-        if app.mode == Mode::Filter {
+        if app.filter_editing {
             spans.push(Span::styled("█", Theme::key_hint()));
         }
         frame.render_widget(Paragraph::new(Line::from(spans)), filter);
     }
 }
 
-/// `● net/tcpconnect_demo  Description.  (reason)`, the directory dimmed.
-fn list_row(entry: &Entry) -> ListItem<'static> {
-    let (g, style) = glyph(&entry.validation);
+/// `● net/tcpconnect_demo  Description.  (reason)`, the directory dimmed; `▶` while running.
+fn list_row(entry: &Entry, running: bool) -> ListItem<'static> {
+    let (g, style) = if running {
+        ("▶", Theme::running())
+    } else {
+        glyph(&entry.validation)
+    };
     let id = entry.id();
     let (dir, name) = match id.rsplit_once('/') {
         Some((dir, name)) => (format!("{dir}/"), name),

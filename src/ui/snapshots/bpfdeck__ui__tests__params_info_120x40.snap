@@ -1,6 +1,6 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 169
+assertion_line: 212
 expression: "render(&app, 120, 40)"
 ---
 "╭ Scripts (4/8) ─────────────────────────╮╭ 1 Info │ 2 Source │ 3 Validation ────────────────────────── params_demo.bt ╮"
@@ -42,4 +42,4 @@ expression: "render(&app, 120, 40)"
 "│                                        ││                                                                            │"
 "│/par                                    ││                                                                            │"
 "╰────────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯"
-" / filter e edit r rescan ? help q quit                                        bpftrace v0.21.2 · 6.1.0-18-amd64 · root "
+" Enter run / filter ? help q quit                                              bpftrace v0.21.2 · 6.1.0-18-amd64 · root "

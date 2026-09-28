@@ -1,6 +1,6 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 223
+assertion_line: 274
 expression: "render(&ready_app(host(Privilege::None, Lockdown::Integrity)), 80, 24)"
 ---
 "   Kernel lockdown (integrity): bpftrace cannot load BPF programs on this host  "
@@ -26,4 +26,4 @@ expression: "render(&ready_app(host(Privilege::None, Lockdown::Integrity)), 80, 
 "│                          ││                                                  │"
 "│                          ││                                                  │"
 "╰──────────────────────────╯╰──────────────────────────────────────────────────╯"
-" / filter e edit r rescan ? help    bpftrace v0.21.2 · 6.1.0-18-amd64 · NO PRIV "
+" Enter run / filter ? help q quit   bpftrace v0.21.2 · 6.1.0-18-amd64 · NO PRIV "

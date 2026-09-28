@@ -1,6 +1,7 @@
 //! Application state and reducer: `App::update(Msg) -> Vec<Cmd>`. No I/O here, ever.
 
 mod filter;
+mod run;
 
 use std::cell::Cell;
 
@@ -10,10 +11,13 @@ use crate::bpftrace::BpftraceInfo;
 use crate::bpftrace::validate::{Strategy, Validation, ValidationRequest};
 use crate::catalog::{Catalog, Script};
 use crate::keymap::{self, Action, Context};
+use crate::model::form::ParamForm;
+use crate::model::run_state::Run;
 use crate::msg::{Cmd, Msg};
 use crate::source::{Origin, ResolvedSource, SourceSpec};
 use crate::sys::SystemInfo;
 use filter::Fuzzy;
+pub use run::{Ask, Confirm, LogView};
 
 pub const TABS: [&str; 3] = ["Info", "Source", "Validation"];
 /// Lines moved by one detail scroll step.
@@ -59,10 +63,19 @@ impl Entry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
-    Browse,
-    Filter,
+pub enum Screen {
+    Browser,
+    /// The right pane shows the run (header + log).
+    Run,
+}
+
+/// Modal on top of the current screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Overlay {
     Help,
+    Params { script_id: String, form: ParamForm },
+    Confirm(Confirm),
+    Ask(Ask),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,11 +105,22 @@ pub struct App {
     /// Position in `visible`.
     pub cursor: usize,
     pub query: String,
-    pub mode: Mode,
+    /// Typing into the list filter.
+    pub filter_editing: bool,
+    pub screen: Screen,
+    pub overlay: Option<Overlay>,
+    pub help_scroll: Cell<u16>,
     pub tab: usize,
     /// Detail scroll offset. The renderer clamps it to the content, hence the `Cell`.
     pub scroll: Cell<u16>,
     pub notice: Option<Notice>,
+    /// The current or last run (D-010: one at a time). Its output stays viewable.
+    pub run: Option<Run>,
+    pub log_view: LogView,
+    /// Run view takes the whole width (`z`).
+    pub full_width: bool,
+    next_run_id: u64,
+    quit_after_run: bool,
     fuzzy: Fuzzy,
 }
 
@@ -113,10 +137,18 @@ impl App {
             visible: Vec::new(),
             cursor: 0,
             query: String::new(),
-            mode: Mode::Browse,
+            filter_editing: false,
+            screen: Screen::Browser,
+            overlay: None,
+            help_scroll: Cell::new(0),
             tab: 0,
             scroll: Cell::new(0),
             notice: None,
+            run: None,
+            log_view: LogView::following(),
+            full_width: false,
+            next_run_id: 0,
+            quit_after_run: false,
             fuzzy: Fuzzy::new(),
         }
     }
@@ -137,11 +169,21 @@ impl App {
     }
 
     pub fn context(&self) -> Context {
-        match self.mode {
-            Mode::Browse => Context::Browser,
-            Mode::Filter => Context::Filter,
-            Mode::Help => Context::Help,
+        match (&self.overlay, self.screen) {
+            (Some(Overlay::Help), _) => Context::Help,
+            (Some(Overlay::Params { .. }), _) => Context::Form,
+            (Some(Overlay::Confirm(_)), _) => Context::Confirm,
+            (Some(Overlay::Ask(_)), _) => Context::Ask,
+            (None, Screen::Browser) if self.filter_editing => Context::Filter,
+            (None, Screen::Browser) => Context::Browser,
+            (None, Screen::Run) if self.log_view.editing => Context::LogFilter,
+            (None, Screen::Run) => Context::Run,
         }
+    }
+
+    /// The run is showing in the right pane.
+    pub fn showing_run(&self) -> Option<&Run> {
+        self.run.as_ref().filter(|_| self.screen == Screen::Run)
     }
 
     pub fn update(&mut self, msg: Msg) -> Vec<Cmd> {
@@ -184,6 +226,24 @@ impl App {
                 }
                 Ok(()) => self.rescan(),
             },
+            Msg::RunStarted { run_id, at } => {
+                self.on_run_started(run_id, at);
+                Vec::new()
+            }
+            Msg::RunFailed { run_id, reason } => {
+                self.on_run_failed(run_id, &reason);
+                Vec::new()
+            }
+            Msg::Run { run_id, at, event } => {
+                self.on_run_event(run_id, at, event);
+                Vec::new()
+            }
+            Msg::Tick(now) => {
+                if let Some(run) = &mut self.run {
+                    run.tick(now);
+                }
+                Vec::new()
+            }
         }
     }
 
@@ -284,14 +344,40 @@ impl App {
             return Vec::new();
         }
         self.notice = None;
-        let action = keymap::lookup(self.context(), &key);
-        if self.mode == Mode::Filter && action.is_none() {
-            self.edit_query(key);
+        let context = self.context();
+        let action = keymap::lookup(context, &key);
+        // Text input contexts: unbound keys are typed.
+        if action.is_none() {
+            match context {
+                Context::Filter => self.edit_query(key),
+                Context::LogFilter => self.log_filter_key(key),
+                Context::Form => self.form_key(key),
+                _ => {}
+            }
             return Vec::new();
         }
         let Some(action) = action else {
             return Vec::new();
         };
+        match context {
+            Context::Browser | Context::Filter => self.browser_action(action),
+            Context::Help => {
+                match action {
+                    Action::Close => self.overlay = None,
+                    Action::ScrollDown => self.help_scroll.set(self.help_scroll.get().saturating_add(1)),
+                    Action::ScrollUp => self.help_scroll.set(self.help_scroll.get().saturating_sub(1)),
+                    _ => {}
+                }
+                Vec::new()
+            }
+            Context::Form => self.form_action(action),
+            Context::Confirm => self.confirm_action(action),
+            Context::Ask => self.ask_action(action),
+            Context::Run | Context::LogFilter => self.run_action(action),
+        }
+    }
+
+    fn browser_action(&mut self, action: Action) -> Vec<Cmd> {
         match action {
             Action::Down => self.move_cursor(1),
             Action::Up => self.move_cursor(-1),
@@ -302,10 +388,10 @@ impl App {
             Action::Tab(n) => self.set_tab(n.min(TABS.len() - 1)),
             Action::ScrollDown => self.scroll.set(self.scroll.get().saturating_add(SCROLL_STEP)),
             Action::ScrollUp => self.scroll.set(self.scroll.get().saturating_sub(SCROLL_STEP)),
-            Action::OpenFilter => self.mode = Mode::Filter,
-            Action::AcceptFilter => self.mode = Mode::Browse,
+            Action::OpenFilter => self.filter_editing = true,
+            Action::AcceptFilter => self.filter_editing = false,
             Action::ClearFilter => {
-                self.mode = Mode::Browse;
+                self.filter_editing = false;
                 if !self.query.is_empty() {
                     self.query.clear();
                     let keep = self.selected().map(|e| e.id().to_string());
@@ -314,9 +400,20 @@ impl App {
             }
             Action::Edit => return self.edit(),
             Action::Rescan => return self.rescan(),
-            Action::Help => self.mode = Mode::Help,
-            Action::CloseHelp => self.mode = Mode::Browse,
-            Action::Quit => self.should_quit = true,
+            Action::Help => {
+                self.help_scroll.set(0);
+                self.overlay = Some(Overlay::Help);
+            }
+            Action::Run => return self.request_run(),
+            Action::ShowRun => {
+                if self.run.is_some() {
+                    self.screen = Screen::Run;
+                } else {
+                    self.notify(Level::Info, "no run yet: select a script and press Enter".into());
+                }
+            }
+            Action::Quit => self.quit_or_ask(),
+            _ => {}
         }
         Vec::new()
     }
@@ -679,7 +776,7 @@ mod tests {
     fn filter_typing_accept_and_clear() {
         let mut app = ready_app(host(Privilege::Root, Lockdown::None));
         app.update(ch('/'));
-        assert_eq!(app.mode, Mode::Filter);
+        assert!(app.filter_editing);
         for c in "tcpconn".chars() {
             app.update(ch(c));
         }
@@ -697,7 +794,7 @@ mod tests {
         app.update(key(KeyCode::Backspace));
         assert_eq!(app.query, "tcpconn");
         app.update(key(KeyCode::Enter));
-        assert_eq!(app.mode, Mode::Browse);
+        assert!(!app.filter_editing);
         assert_eq!(ids(&app).len(), matched, "accepted filter stays");
 
         app.update(key(KeyCode::Esc));
@@ -716,7 +813,7 @@ mod tests {
         }
         assert_eq!(ids(&app).first(), Some(&"vfs_latency_demo.bt"));
         app.update(key(KeyCode::Esc));
-        assert_eq!(app.mode, Mode::Browse);
+        assert!(!app.filter_editing);
     }
 
     #[test]
@@ -793,11 +890,11 @@ mod tests {
     fn help_and_quit() {
         let mut app = ready_app(host(Privilege::Root, Lockdown::None));
         app.update(ch('?'));
-        assert_eq!(app.mode, Mode::Help);
+        assert_eq!(app.overlay, Some(Overlay::Help));
         app.update(ch('j'));
         assert_eq!(app.cursor, 0, "help swallows list keys");
         app.update(ch('q'));
-        assert_eq!(app.mode, Mode::Browse);
+        assert_eq!(app.overlay, None);
         assert!(!app.should_quit, "q closes help first");
         app.update(ch('q'));
         assert!(app.should_quit);

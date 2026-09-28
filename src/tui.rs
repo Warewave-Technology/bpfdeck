@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use ratatui::DefaultTerminal;
@@ -17,12 +17,15 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc;
 
 use crate::app::App;
+use crate::bpftrace::runner::{self, Escalation, RunEvent, RunHandle};
 use crate::bpftrace::validate::{self, Strategy, Validator};
 use crate::msg::{Cmd, Msg};
 use crate::{bpftrace, catalog, source, sys, ui};
 
 const CHANNEL_CAPACITY: usize = 1024;
 const INPUT_POLL: Duration = Duration::from_millis(50);
+/// Redraw cadence while a run is active (elapsed time), spec §8.
+const TICK: Duration = Duration::from_millis(250);
 
 pub async fn run(input: String, bpftrace_path: PathBuf) -> Result<()> {
     let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
@@ -42,8 +45,11 @@ pub async fn run(input: String, bpftrace_path: PathBuf) -> Result<()> {
         bpftrace: bpftrace_path,
         validator: Arc::new(OnceLock::new()),
         input_gate,
+        run: None,
     };
     let result = event_loop(&mut terminal, &mut app, &mut exec, &mut rx).await;
+    // Dropping the handle kills a still running bpftrace (its whole process group).
+    drop(exec);
     stop_input.store(true, Ordering::Release);
     ratatui::restore();
     result
@@ -73,13 +79,17 @@ async fn event_loop(
     Ok(())
 }
 
+/// SIGTERM/SIGHUP (and SIGINT, which in raw mode can only come from `kill`) end bpfdeck.
+/// Installing a SIGINT handler also means bpftrace never inherits an ignored SIGINT.
 fn spawn_signal_forwarder(tx: mpsc::Sender<Msg>) -> Result<()> {
     let mut term = signal(SignalKind::terminate())?;
     let mut hup = signal(SignalKind::hangup())?;
+    let mut int = signal(SignalKind::interrupt())?;
     tokio::spawn(async move {
         tokio::select! {
             _ = term.recv() => {}
             _ = hup.recv() => {}
+            _ = int.recv() => {}
         }
         let _ = tx.send(Msg::Terminate).await;
     });
@@ -117,6 +127,8 @@ struct Executor {
     /// Set once bpftrace is detected; `Cmd::Validate` only arrives after that.
     validator: Arc<OnceLock<Arc<Validator>>>,
     input_gate: Arc<Mutex<()>>,
+    /// The current run (D-010). Replacing or dropping it kills a live process group.
+    run: Option<(u64, RunHandle)>,
 }
 
 impl Executor {
@@ -177,6 +189,14 @@ impl Executor {
                         .await;
                 });
             }
+            Cmd::StartRun { run_id, argv } => self.start_run(run_id, &argv),
+            Cmd::StopRun { run_id } => {
+                if let Some((id, handle)) = &mut self.run
+                    && *id == run_id
+                {
+                    handle.stop();
+                }
+            }
             Cmd::OpenEditor { id, path, copy } => {
                 let result = tokio::task::block_in_place(|| self.edit(&path, copy, terminal));
                 let msg = Msg::EditorClosed {
@@ -189,6 +209,58 @@ impl Executor {
             }
         }
         Ok(())
+    }
+
+    /// Spawn bpftrace and forward its events (plus a tick for the elapsed time) as `Msg`s
+    /// until it exits.
+    fn start_run(&mut self, run_id: u64, argv: &[std::ffi::OsString]) {
+        let tx = self.tx.clone();
+        let (events_tx, mut events) = mpsc::channel(runner::CHANNEL_CAPACITY);
+        let handle = match runner::spawn(argv, events_tx, Escalation::default()) {
+            Ok(handle) => handle,
+            Err(e) => {
+                let program = argv
+                    .first()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let reason = format!("cannot run {program}: {e}");
+                tokio::spawn(async move {
+                    let _ = tx.send(Msg::RunFailed { run_id, reason }).await;
+                });
+                return;
+            }
+        };
+        self.run = Some((run_id, handle));
+        tokio::spawn(async move {
+            if tx
+                .send(Msg::RunStarted {
+                    run_id,
+                    at: Instant::now(),
+                })
+                .await
+                .is_err()
+            {
+                return;
+            }
+            let mut tick = tokio::time::interval(TICK);
+            loop {
+                tokio::select! {
+                    event = events.recv() => {
+                        let Some(event) = event else { break };
+                        let done = matches!(event, RunEvent::Exited(_));
+                        let msg = Msg::Run { run_id, at: Instant::now(), event };
+                        if tx.send(msg).await.is_err() || done {
+                            break;
+                        }
+                    }
+                    _ = tick.tick() => {
+                        if tx.send(Msg::Tick(Instant::now())).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
     }
 
     /// Suspend the TUI, run `$VISUAL`/`$EDITOR` (split on whitespace, no shell), resume.

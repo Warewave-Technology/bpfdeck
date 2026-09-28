@@ -1,6 +1,6 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 176
+assertion_line: 219
 expression: "render(&app, 120, 40)"
 ---
 "╭ Scripts (8) ───────────────────────────╮╭ 1 Info │ 2 Source │ 3 Validation ───────────────────── vfs_latency_demo.bt ╮"
@@ -42,4 +42,4 @@ expression: "render(&app, 120, 40)"
 "│                                        ││                                                                            │"
 "│                                        ││                                                                            │"
 "╰────────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯"
-" / filter e edit r rescan ? help q quit                                        bpftrace v0.21.2 · 6.1.0-18-amd64 · root "
+" Enter run / filter ? help q quit                                              bpftrace v0.21.2 · 6.1.0-18-amd64 · root "

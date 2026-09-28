@@ -2,6 +2,8 @@ pub mod theme;
 
 mod browser;
 mod help;
+mod modals;
+mod run_view;
 mod source_view;
 
 use ratatui::Frame;
@@ -9,7 +11,7 @@ use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use crate::app::{App, BpftraceState, Level, Mode};
+use crate::app::{App, BpftraceState, Level, Overlay};
 use crate::sys::{Lockdown, Privilege};
 use theme::Theme;
 
@@ -39,14 +41,29 @@ pub fn draw(frame: &mut Frame, app: &App) {
         draw_lockdown_banner(frame, banner, mode);
     }
 
-    let [list, detail] =
-        Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).areas(main);
-    browser::draw_list(frame, list, app);
-    browser::draw_detail(frame, detail, app);
+    match app.showing_run() {
+        Some(run) if app.full_width => run_view::draw(frame, main, app, run),
+        Some(run) => {
+            let [list, detail] =
+                Layout::horizontal([Constraint::Percentage(30), Constraint::Percentage(70)]).areas(main);
+            browser::draw_list(frame, list, app);
+            run_view::draw(frame, detail, app, run);
+        }
+        None => {
+            let [list, detail] =
+                Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).areas(main);
+            browser::draw_list(frame, list, app);
+            browser::draw_detail(frame, detail, app);
+        }
+    }
     draw_status(frame, status, app);
 
-    if app.mode == Mode::Help {
-        help::draw(frame, area);
+    match &app.overlay {
+        Some(Overlay::Help) => help::draw(frame, area, app),
+        Some(Overlay::Params { script_id, form }) => modals::draw_form(frame, main, script_id, form),
+        Some(Overlay::Confirm(confirm)) => modals::draw_confirm(frame, main, app, confirm),
+        Some(Overlay::Ask(ask)) => modals::draw_ask(frame, main, ask),
+        None => {}
     }
 }
 
@@ -276,6 +293,136 @@ mod tests {
             bpftrace: Err("cannot run bpftrace: No such file or directory (os error 2)".into()),
         });
         insta::assert_snapshot!("failed_no_bpftrace_80x24", render(&app, 80, 24));
+    }
+
+    fn select(app: &mut App, id: &str) {
+        keys(app, &[KeyCode::Char('/')]);
+        keys(app, &id.chars().map(KeyCode::Char).collect::<Vec<_>>());
+        keys(app, &[KeyCode::Esc]);
+    }
+
+    /// vfs_latency_demo running for 12 s with the mixed session replayed.
+    fn running_app() -> (App, u64, std::time::Instant) {
+        use crate::bpftrace::json::parse_line;
+        use crate::bpftrace::runner::RunEvent;
+        let mut app = ready();
+        select(&mut app, "vfs_latency_demo.bt");
+        keys(&mut app, &[KeyCode::Enter]);
+        let run_id = match app
+            .update(Msg::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)))
+            .as_slice()
+        {
+            [crate::msg::Cmd::StartRun { run_id, .. }] => *run_id,
+            other => panic!("{other:?}"),
+        };
+        let t0 = std::time::Instant::now();
+        app.update(Msg::RunStarted { run_id, at: t0 });
+        let session = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/json/session_mixed.ndjson"
+        ))
+        .expect("fixture");
+        for msg in session.lines().flat_map(parse_line) {
+            app.update(Msg::Run {
+                run_id,
+                at: t0,
+                event: RunEvent::Output(msg),
+            });
+        }
+        app.update(Msg::Run {
+            run_id,
+            at: t0,
+            event: RunEvent::Stderr("WARNING: could not resolve symbol 0xffffffff81000000".into()),
+        });
+        app.update(Msg::Tick(t0 + std::time::Duration::from_secs(12)));
+        (app, run_id, t0)
+    }
+
+    #[test]
+    fn params_form_80x24() {
+        let mut app = ready();
+        select(&mut app, "params_demo.bt");
+        keys(
+            &mut app,
+            &[
+                KeyCode::Enter,
+                KeyCode::Char('4'),
+                KeyCode::Char('2'),
+                KeyCode::Tab,
+            ],
+        );
+        insta::assert_snapshot!(render(&app, 80, 24));
+    }
+
+    #[test]
+    fn confirm_unsafe_no_priv_120x40() {
+        let mut app = ready_app(host(Privilege::None, Lockdown::None));
+        select(&mut app, "unsafe_demo.bt");
+        keys(&mut app, &[KeyCode::Enter]);
+        insta::assert_snapshot!(render(&app, 120, 40));
+    }
+
+    #[test]
+    fn confirm_partial_80x24() {
+        let mut app = ready();
+        select(&mut app, "vfs_latency_demo.bt");
+        keys(&mut app, &[KeyCode::Enter]);
+        insta::assert_snapshot!(render(&app, 80, 24));
+    }
+
+    #[test]
+    fn run_view_running_120x40() {
+        let (app, _, _) = running_app();
+        insta::assert_snapshot!(render(&app, 120, 40));
+    }
+
+    #[test]
+    fn run_view_stopped_80x24() {
+        use crate::bpftrace::json::parse_line;
+        use crate::bpftrace::runner::{RunEvent, RunExit};
+        let (mut app, run_id, t0) = running_app();
+        keys(&mut app, &[KeyCode::Char('x')]);
+        let dump = r#"{"type": "hist", "data": {"@usecs": [{"min": 16, "max": 31, "count": 421}]}}"#;
+        for msg in parse_line(dump) {
+            app.update(Msg::Run {
+                run_id,
+                at: t0,
+                event: RunEvent::Output(msg),
+            });
+        }
+        let exit = RunExit {
+            code: Some(0),
+            signal: None,
+            forced: None,
+            error: None,
+        };
+        app.update(Msg::Run {
+            run_id,
+            at: t0 + std::time::Duration::from_secs(13),
+            event: RunEvent::Exited(exit),
+        });
+        insta::assert_snapshot!(render(&app, 80, 24));
+    }
+
+    #[test]
+    fn run_view_full_width_paused_filtered_120x40() {
+        let (mut app, _, _) = running_app();
+        render(&app, 120, 40); // the renderer reports what is on screen
+        keys(
+            &mut app,
+            &[KeyCode::Char('z'), KeyCode::Char('p'), KeyCode::Char('/')],
+        );
+        keys(&mut app, &"map".chars().map(KeyCode::Char).collect::<Vec<_>>());
+        insta::assert_snapshot!(render(&app, 120, 40));
+    }
+
+    #[test]
+    fn ask_stop_for_new_run_80x24() {
+        let (mut app, _, _) = running_app();
+        keys(&mut app, &[KeyCode::Esc]);
+        select(&mut app, "syscount_demo.bt");
+        keys(&mut app, &[KeyCode::Enter]);
+        insta::assert_snapshot!(render(&app, 80, 24));
     }
 
     #[test]

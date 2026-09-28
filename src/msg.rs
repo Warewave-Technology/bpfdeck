@@ -1,11 +1,14 @@
 //! `Msg`: everything that happens to the app. `Cmd`: side effects the app asks for.
 //! See docs/architecture.md ("Concurrency model").
 
+use std::ffi::OsString;
 use std::path::PathBuf;
+use std::time::Instant;
 
 use ratatui::crossterm::event::KeyEvent;
 
 use crate::bpftrace::BpftraceInfo;
+use crate::bpftrace::runner::RunEvent;
 use crate::bpftrace::validate::{Strategy, Validation, ValidationRequest};
 use crate::catalog::Catalog;
 use crate::source::ResolvedSource;
@@ -36,6 +39,24 @@ pub enum Msg {
         copy: bool,
         result: Result<(), String>,
     },
+    /// bpftrace was spawned for `Cmd::StartRun`.
+    RunStarted {
+        run_id: u64,
+        at: Instant,
+    },
+    /// Spawning failed.
+    RunFailed {
+        run_id: u64,
+        reason: String,
+    },
+    /// Output, stderr or exit of a run; `at` is when the executor received it.
+    Run {
+        run_id: u64,
+        at: Instant,
+        event: RunEvent,
+    },
+    /// 250 ms heartbeat while a run is active (elapsed time).
+    Tick(Instant),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,5 +80,14 @@ pub enum Cmd {
         id: String,
         path: PathBuf,
         copy: bool,
+    },
+    /// Spawn bpftrace with this exact argv (built by `bpftrace::command::run_argv`).
+    StartRun {
+        run_id: u64,
+        argv: Vec<OsString>,
+    },
+    /// Graceful stop: SIGINT, then SIGTERM/SIGKILL on timeouts.
+    StopRun {
+        run_id: u64,
     },
 }
