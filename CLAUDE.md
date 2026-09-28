@@ -75,4 +75,5 @@ accent=purple · key hints=orange · borders=bg3, focused=yellow · base bg0/fg.
 
 ## Current state
 M0 done: skeleton compiles and runs (`q` quits), docs and fixtures in place.
-Next: **M1** in `docs/milestones.md`.
+M1 done: `source/` (local + git, D-012), `discovery/` (walk, lexer, metadata), `--list`.
+Next: **M2** in `docs/milestones.md`.

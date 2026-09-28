@@ -145,10 +145,12 @@ handlers use (single source of truth).
 
 ### 6.1 Source resolution
 - Local path: must exist and be a directory or a single script file.
-- Git URL: clone with the `git` binary (`git clone --depth 1 [--branch ref]`) into
-  `$XDG_CACHE_HOME/bpfdeck/repos/<sha256(url)[..16]>/`. If it exists, `git fetch --depth 1`
-  + `git reset --hard FETCH_HEAD` behind a "Updating…" status; on failure use the cached
-  copy and show a warning. Commit hashes as `#ref` → full fetch of that commit.
+- Git URL: fetch with the `git` binary into
+  `$XDG_CACHE_HOME/bpfdeck/repos/<sha256(url)[..16]>/` (`url` without `#ref`): `git init`
+  on first use, then always `git fetch --depth 1 -- origin <ref|HEAD>` +
+  `git reset --hard FETCH_HEAD` behind a "Updating…" status (D-012). On update failure use
+  the cached copy and show a warning. Abbreviated commit hashes as `#ref` → full fetch,
+  then resolve locally. Refs that could be read as options are rejected.
 - Never run hooks from the cloned repo (`-c core.hooksPath=/dev/null`), never recurse submodules.
 
 ### 6.2 Discovery
@@ -159,7 +161,9 @@ handlers use (single source of truth).
 
 ### 6.3 Metadata extraction (pure functions, heavily unit-tested)
 - **Description**: bpftrace/tools convention — first comment line `// name<TAB/spaces>Description.`
-  Take the text after the name. Fallback: first non-empty comment line. Fallback: none.
+  Take the text after the name. Fallback: first non-empty line of the leading comment block
+  (`//` lines or a `/* … */` block; comments after the first code line don't count).
+  Fallback: none.
 - **Usage**: comment lines starting with `USAGE:` / `Usage:` / `Example of usage:` block.
 - **Probes**: lightweight lexer — strip comments and strings, find probe specs that precede
   `{` or a predicate `/…/` at top level (brace depth 0). A probe line may list several
@@ -167,8 +171,9 @@ handlers use (single source of truth).
   Special: `BEGIN`, `END`, `begin`, `end`, `interval:`, `profile:`, `software:`,
   `hardware:`, `self:` are "always available" for the probe-list check.
 - **Parameters**: regex `\$([0-9]+)` (ignore `$#` but record it) and
-  `getopt\(\s*"([^"]+)"\s*(?:,\s*([^)]+))?\)`.
-- **Unsafe**: calls to `system(`, `signal(`, `override(`, `write_user(` → needs `--unsafe`
+  `getopt("name"[, default[, "description"]])` (the description argument exists since
+  bpftrace 0.24, e.g. `tools/opensnoop.bt`). `$N` inside string literals is not a parameter.
+- **Unsafe**: calls (not `macro`/`fn` definitions) to `system(`, `signal(`, `override(`, `write_user(` → needs `--unsafe`
   (bpftrace refuses otherwise; dry-run stderr is the source of truth, the regex is a hint).
 - The extractor must never panic on garbage input (fuzz-ish test with random bytes).
 

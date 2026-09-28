@@ -11,15 +11,20 @@ Do them in order. Do not start a milestone's UI before its pure logic has tests.
 - [x] Docs: spec, architecture, JSON format, decisions
 - [x] Fixtures: sample `.bt` scripts, NDJSON output samples
 
-## M1 — Source + discovery + metadata (pure, no UI yet)
-- [ ] `source::resolve(input) -> Result<ResolvedSource>` for local dir, single file, git URL (+`#ref`)
-- [ ] Cache dir via `directories::ProjectDirs`; clone/update per spec §6.1 (hooks off)
-- [ ] `discovery::walk(root)` per spec §6.2 — test on `tests/fixtures/scripts`
+## M1 — Source + discovery + metadata (pure, no UI yet) ✅
+- [x] `source::resolve(input) -> Result<ResolvedSource>` for local dir, single file, git URL (+`#ref`)
+- [x] Cache dir via `directories::ProjectDirs`; clone/update per spec §6.1 (hooks off)
+- [x] `discovery::walk(root)` per spec §6.2 — test on `tests/fixtures/scripts`
       (must find 8 scripts incl. `net/tcpconnect_demo.bt` and `shebang_no_ext`, ignore `README.txt`)
-- [ ] `metadata::extract(&str)`: description, usage, probes, params, unsafe hints — table tests
+- [x] `metadata::extract(&str)`: description, usage, probes, params, unsafe hints — table tests
       for every fixture + multi-line probe lists + predicates + comments containing `{`
-- [ ] No-panic test: random bytes / truncated scripts
-- [ ] Temporary `--list` CLI flag printing discovery+metadata as a table (debug aid; keep it)
+- [x] No-panic test: random bytes / truncated scripts
+- [x] Temporary `--list` CLI flag printing discovery+metadata as a table (debug aid; keep it)
+
+Demo: `cargo run -- --list tests/fixtures/scripts` (8 scripts) and
+`cargo run -- --list https://github.com/bpftrace/bpftrace` (93 scripts incl. `tools/`,
+correct descriptions, `opensnoop.bt` → `--depth=35 --errname`). Git sync is tested against
+local `file://` repos with the real `git` binary (hooks-disabled check has a positive control).
 
 ## M2 — bpftrace integration (pure parts + fake bpftrace)
 - [ ] `bpftrace::json::parse_line` for every fixture in `tests/fixtures/json/`

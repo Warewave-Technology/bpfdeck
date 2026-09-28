@@ -40,3 +40,15 @@ the kernel as root. — accepted
 signal handling; the state model (`RunId`) is designed so it can be added later. — accepted
 
 **D-011 — Working name `bpfdeck`.** Placeholder; rename before first release. — open
+
+**D-012 — Git sources: `init` + shallow `fetch` + `reset --hard` instead of `clone`.**
+Refines §6.1 of the spec. First checkout and update are the same code path
+(`fetch --depth 1 -- origin <ref|HEAD>` → `reset --hard FETCH_HEAD`), which also covers
+tags and full commit hashes that `clone --branch` cannot take; abbreviated hashes fall back
+to a full fetch and a local `rev-parse`. Every git call forces `core.hooksPath=/dev/null`,
+`submodule.recurse=false`, `core.fsmonitor=false`, `protocol.ext.allow=never` and
+`GIT_TERMINAL_PROMPT=0`. `#ref` is user input that lands in git's argv, so refs starting
+with `-` or containing whitespace/control characters are rejected and refs are placed
+after `--`. Recognized URL prefixes: `https://`, `http://`, `ssh://`, `git://`, `file://`,
+`git@` (`file://` makes the git path testable without network). A failed first checkout
+removes the cache dir; a failed update keeps the old checkout and returns a warning. — accepted

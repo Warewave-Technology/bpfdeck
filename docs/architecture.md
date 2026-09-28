@@ -12,6 +12,7 @@ src/
   app.rs             App state + reducer: fn update(&mut self, Msg) -> Vec<Cmd>
   msg.rs             Msg (input from the world) and Cmd (side effects to perform)
   keymap.rs          Key → Action table per context; also feeds the help modal
+  list.rs            `--list` debug output: discovery + metadata as a plain table
   source/            resolve <path|git-url> → local root dir
     mod.rs
     git.rs           git subprocess (clone/fetch), cache dir layout
