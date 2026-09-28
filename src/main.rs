@@ -1,4 +1,5 @@
 mod app;
+mod bpftrace;
 mod discovery;
 mod list;
 mod source;
