@@ -1,6 +1,7 @@
 //! Everything that talks to bpftrace: output parsing, argv building, capability detection,
 //! running and validation.
 
+pub mod coalesce;
 pub mod command;
 pub mod json;
 pub mod runner;
