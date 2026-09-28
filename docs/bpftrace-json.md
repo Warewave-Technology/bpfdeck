@@ -89,7 +89,10 @@ the whole point of the script (biolatency, runqlat…) — it must be captured.
 ## To verify on real machines (M2 exit criterion)
 
 - [ ] RHEL 9 packaged bpftrace: capture output of every fixture script → `real_rhel9_*.ndjson`.
-- [ ] Debian 12/13 packaged bpftrace: same → `real_debian*_*.ndjson`.
+- [~] Debian 12/13 packaged bpftrace: Debian 13 (0.23.2) done on a Docker VM kernel, see
+      docs/real-kernel-testing.md → `real_debian13_orbstack_*.ndjson`. Debian 12 and a real
+      host still to do.
 - [ ] RHEL 8 packaged bpftrace: does it support `--dry-run`? Does `-f json` match the above?
-- [ ] Does stdout ever contain non-JSON lines with `-q`?
-- [ ] Exit-time dump order and whether `attached_probes` has `count`.
+- [x] Does stdout ever contain non-JSON lines with `-q`? 0.23.2: only blank lines (2).
+- [x] Exit-time dump order and whether `attached_probes` has `count`. 0.23.2: blank lines,
+      then the maps; no `count` (and no `attached_probes` at all with `-q`).

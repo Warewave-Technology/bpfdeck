@@ -216,7 +216,9 @@ Run on a bounded worker pool (default 4), results cached in memory keyed by
 
 Two strategies, chosen once at startup by capability detection (`bpftrace --help`):
 1. **Dry-run (preferred)**: `bpftrace --dry-run -q -f json -- <file> [dummy params]`.
-   Parses, loads **and attaches** probes then exits. Exit 0 → `●`. Non-zero → `✗` with stderr.
+   Parses, loads **and attaches** probes then exits. Exit 0 → `●`. Non-zero → `✗` with stderr,
+   or `!` when stderr is bpftrace refusing unsafe builtins (wording differs by version:
+   "…need the --unsafe flag" / "…unsafe function being used in safe mode").
    Requires privileges. Positional params the script needs get placeholder values
    (`0`) so the dry run does not fail on missing args; note this in the Validation tab.
    Timeout 20 s per script → `✗ timeout`.
@@ -248,7 +250,23 @@ runs will fail and the banner explains why.
   queued messages for at most ~30 ms before drawing. Measured with the fake bpftrace
   flooding 10M printf lines: keys show on screen within 10–20 ms.
 
-### 6.6 Misc
+### 6.6 Export (M6)
+- `w` in the run view writes `<export dir>/bpfdeck-<script>-<UTC yyyymmdd-hhmmss>.txt`
+  (header, panels in bpftrace's text format, the log) and `.ndjson` (bpftrace's raw stdout,
+  byte for byte). `--export-dir` (default `.`) chooses the directory.
+- The raw copy is spooled to `<cache>/bpfdeck/runs/` while the run is going (capped at
+  256 MiB, noted in the text export when hit) and deleted when the next run starts or
+  bpfdeck exits. Exporting works during a run too.
+
+### 6.7 Readability under real-world noise
+- Log: an error/raw line identical to one of the last 4 lines (with only error/raw lines
+  in between) increments that line's `(×N)` counter instead of adding a line. Program
+  output is never collapsed. The header's error count is still exact.
+- Histogram panel: when the buckets don't fit, runs of 3+ empty buckets collapse into one
+  `⋮ N empty buckets` row so far-out outliers stay visible. The text export keeps every
+  bucket, like bpftrace.
+
+### 6.8 Misc
 - `e` opens the selected script in `$EDITOR` (suspend TUI, restore after). Read-only
   for git sources: copy to a temp file and warn that edits are not saved to the repo.
 - `r` re-runs discovery + validation (e.g. after editing). It does not fetch git sources

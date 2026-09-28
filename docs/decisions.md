@@ -69,3 +69,18 @@ line *after* params). The form comes first; the confirmation then shows the fina
 and is the single last gate (D-009's `--unsafe` toggle lives there). Named params left at
 their default are not passed, so the command line shows only what the user changed; a
 flag whose default is `true` that the user unticks is passed as `--name=false`. — accepted
+
+**D-015 — Releases: static musl binaries linked with rust-lld, built on one x86_64 runner.**
+A `v*` tag builds `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` with the
+toolchain's bundled `rust-lld` as linker (musl targets carry their own C runtime), checks
+the result is statically linked and < 10 MB, runs the x86_64 one, and attaches
+`bpfdeck-<tag>-<target>.tar.gz` + `.sha256` to a GitHub release. No `cross`, Docker or C
+cross toolchain. Verified locally: both targets built (aarch64 also cross-built from
+amd64) and ran on Alpine (no glibc); 3.3 MB / 3.9 MB. CI builds the x86_64 musl binary on
+every push. Nothing is pushed or released until the owner decides to. — accepted
+
+**D-016 — Real-kernel checks in a privileged container on the Docker VM kernel.**
+Without a Linux host at hand, `tests/realhost/` runs bpfdeck against bpftrace 0.23.2 on
+OrbStack's kernel. It found a real bug (0.23's unsafe wording) and two UX problems
+(helper-error floods, far outliers in histograms) that the fake could not. It does not
+replace the RHEL/Debian checks of D-008; see docs/real-kernel-testing.md. — accepted

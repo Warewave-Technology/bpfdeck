@@ -34,6 +34,8 @@ local `file://` repos with the real `git` binary (hooks-disabled check has a pos
 - [x] Runner: spawn, stream, SIGINT→TERM→KILL escalation, exit status — tested with the fake
 - [x] Validation worker pool + cache — tested with the fake (`--dry-run` success/failure paths)
 - [ ] **Manual on real hosts**: capture `real_*` fixtures (see docs/bpftrace-json.md checklist)
+      Partly done on a Docker VM kernel (D-016): Debian 13 / bpftrace 0.23.2 fixtures and
+      findings in docs/real-kernel-testing.md. RHEL 8/9 and Debian 12 still open.
       Tools: `sudo bpfdeck --list tests/fixtures/scripts` (validation column + details) and
       `sudo bpfdeck --run vfs_latency_demo.bt tests/fixtures/scripts` (Ctrl-C → exit dump).
 
@@ -57,6 +59,8 @@ with the terminal restored and no leftover processes.
 - [x] Event log panel: ring buffer, follow/pause, filter
 - [x] Stop flow captures the exit-time dump
 - [ ] Test with `vfs_latency_demo.bt` and `tcpconnect_demo.bt` on a real host
+      Run/stop/export verified on the Docker VM kernel (D-016) with a tracepoint read-latency
+      script, since `kprobe:vfs_read` does not fire there. A real host is still needed.
 
 Demo (tmux, fake bpftrace): Enter → confirmation → run; the log streams a replayed
 session, `x` captures the exit-time `hist` and shows `exited(0)`; the params form sends
@@ -78,8 +82,10 @@ test `tui::tests::flood_is_coalesced_and_accounted_for` checks accounting under 
 consumer (delivered + dropped = sent, snapshots coalesced, exit last).
 
 ## M6 — Polish (optional, pick by value)
-- [ ] Export current run (NDJSON raw + text rendering) to a file
-- [ ] Tree view for script list
-- [ ] Privilege separation (D-005 v2)
-- [ ] Static musl build + GitHub release workflow (x86_64, aarch64)
-- [ ] Rename (D-011)
+- [x] Export current run (NDJSON raw + text rendering) to a file (`w`, spec §6.6)
+- [ ] Tree view for script list — skipped for now: the filter already matches directories
+- [ ] Privilege separation (D-005 v2) — needs a design discussion first
+- [x] Static musl build + GitHub release workflow (x86_64, aarch64) (D-015; not pushed yet)
+- [ ] Rename (D-011) — the owner picks the name
+- [x] (added) Real-kernel harness `tests/realhost/` (D-016) and the fixes it led to:
+      unsafe wording of bpftrace 0.23, repeated-error collapsing, empty-bucket collapsing

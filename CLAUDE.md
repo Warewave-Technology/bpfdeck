@@ -32,6 +32,7 @@ cargo test                                     # must pass without root or bpftr
 sudo -E cargo test -- --ignored                # real-kernel tests
 cargo fmt && cargo clippy --all-targets -- -D warnings
 cargo insta review                             # after intentional UI changes
+tests/realhost/run.sh --list tests/fixtures/scripts  # real bpftrace in a privileged container (D-016)
 ```
 
 ## Hard rules
@@ -74,6 +75,8 @@ accent=purple · key hints=orange · borders=bg3, focused=yellow · base bg0/fg.
 - Params: `bpftrace [opts] -- file.bt [positional…] [--x=val|--x]`. Always put the file and
   all params after `--`: getopt permutes, so values could otherwise become options (D-013).
 - Kernel lockdown (Secure Boot) blocks bpftrace entirely → detect and explain.
+- Versions differ: 0.23 has no `getopt`, words the unsafe refusal differently, prints no
+  `attached_probes.count`. Real scripts emit `helper_error` floods. docs/real-kernel-testing.md.
 
 ## Current state
 M0 done: skeleton compiles and runs (`q` quits), docs and fixtures in place.
@@ -85,4 +88,6 @@ M4 done except the real-host test: run flow (form → confirm → run view, D-01
 (run_state, log, form), executor StartRun/StopRun + 250 ms tick.
 M5 done: panels (`model/hist.rs`, `model/panels.rs`, `ui/widgets/`), coalescing forwarder
 (`bpftrace/coalesce.rs`), prioritized input channel + frame budget in `tui.rs`.
-Next: real-host checks for M2/M4 (need a Linux host), then optional **M6**.
+M6 (partial): export (`w`, spool), release workflow (D-015), real-kernel harness (D-016).
+Open: tree view, privilege separation (design first), rename (owner's call), RHEL/Debian 12
+host checks. Remote `origin` is set; nothing pushed until release.
