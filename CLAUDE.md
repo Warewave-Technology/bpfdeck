@@ -83,4 +83,6 @@ runner, validate), `sys.rs`, fake bpftrace, headless `--list`/`--run`.
 M3 done: TUI browser (`tui.rs` loop/executor, `app/` reducer, `keymap.rs`, `ui/`).
 M4 done except the real-host test: run flow (form → confirm → run view, D-014), `model/`
 (run_state, log, form), executor StartRun/StopRun + 250 ms tick.
-Next: **M5** (panels). Open: real-host checks for M2 and M4 (need a Linux host).
+M5 done: panels (`model/hist.rs`, `model/panels.rs`, `ui/widgets/`), coalescing forwarder
+(`bpftrace/coalesce.rs`), prioritized input channel + frame budget in `tui.rs`.
+Next: real-host checks for M2/M4 (need a Linux host), then optional **M6**.

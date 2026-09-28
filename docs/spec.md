@@ -130,6 +130,22 @@ Body is a set of **panels**, one per output stream, created on first appearance:
 
 Panel layout: if exactly one non-log panel exists, it takes ~70% height and the log the
 rest. With several, cycle focus with `Tab` and show one at a time with a panel tab bar.
+Panels appear in order of first message. When the run exits, focus moves to the panel the
+exit-time dump updated last (e.g. biolatency's histogram) unless the user already picked
+one with `Tab`.
+
+Panel details (M5):
+- Histogram labels follow bpftrace's text output: `[n]` single-value buckets, `[a, b)`,
+  `(..., 0)` underflow, `[100, ...)` overflow; log2 bounds that are multiples of 1024 use
+  K/M/G/T/P/E, lhist only when its step is a multiple of 1024. Leading and trailing empty
+  buckets are hidden, gaps in between kept (like bpftrace). Bars use eighth blocks.
+- Top table: `+` new key, `↑`/`↓` vs the previous snapshot (none on the first one); sort
+  marker `▼` (value) / `▲` (key); numeric keys sort numerically; rows that don't fit are
+  counted (`… N more rows`).
+- Value: the value centered, with the run time of its last *change* and the update count.
+- Stats: `count/average/total` per key when the shape has them, otherwise a generic
+  key/value table (also used for tseries shapes we don't recognize).
+- Tseries: sparkline of the newest points that fit, with last/min/max and time range.
 
 Map semantics: each new message for a map name **replaces** the previous snapshot
 (bpftrace prints the whole map each time, and scripts usually `clear()` after print).
@@ -145,11 +161,10 @@ finished), whose output stays viewable until the next run starts.
 v1: one run at a time. Starting another asks to stop the current one. `q` with an active
 run asks, then stops it and quits once it has exited (so the exit-time dump still runs).
 
-Log panel (M4): follows the newest line by default. Scrolling up (`k`, `PgUp`, `g`) or `p`
+Log panel: follows the newest line by default. Scrolling up (`k`, `PgUp`, `g`) or `p`
 pauses on the lines currently shown; `G`/`End`, `p`, or scrolling back to the bottom
 follows again. `/` filters (case-insensitive substring) without changing pause/follow.
-Until the M5 panels exist, map/hist/stats/tseries messages appear in the log as one-line
-summaries (accent color); the latest snapshot per map name is already kept.
+map/hist/stats/tseries messages go to panels only, not to the log.
 
 ### 5.5 Status bar
 Context-sensitive key hints (`Theme::key_hint` for keys), bpftrace version, kernel
@@ -225,7 +240,13 @@ runs will fail and the banner explains why.
 - stderr: line reader → log (error style) and kept for the Validation tab.
 - Backpressure: bounded channel (4096). If the UI lags, coalesce map/hist snapshots
   (only the latest per map name matters); never drop printf lines silently — count
-  drops and show them in the header.
+  drops and show them in the header. Implemented in the executor's forwarder: events
+  wait in a coalescer until the app channel has room, so batches are tiny while the UI
+  keeps up; text lines beyond the log capacity (10k) are dropped oldest-first and
+  counted; the exit event always comes after the exit-time dump.
+- Keys and signals use their own channel, read before run output, and the loop applies
+  queued messages for at most ~30 ms before drawing. Measured with the fake bpftrace
+  flooding 10M printf lines: keys show on screen within 10–20 ms.
 
 ### 6.6 Misc
 - `e` opens the selected script in `$EDITOR` (suspend TUI, restore after). Read-only

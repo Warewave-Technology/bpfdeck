@@ -63,13 +63,19 @@ session, `x` captures the exit-time `hist` and shows `exited(0)`; the params for
 `-- params_demo.bt 1234 --verbose` (checked in the fake's argv log); `q` during a run asks,
 stops it and exits 0 with no leftover processes.
 
-## M5 — Visualization panels
-- [ ] Histogram widget (eighth-block bars, bpftrace-style labels, under/overflow buckets, keyed selector)
-- [ ] Top-table widget (sorted, tuple keys split, delta markers, inline bars)
-- [ ] Scalar value, stats table, tseries sparkline
-- [ ] Panel layout + focus cycling
-- [ ] Coalescing under load: run a printf-flood script, UI stays responsive
-- [ ] Snapshot tests per widget from fixtures
+## M5 — Visualization panels ✅
+- [x] Histogram widget (eighth-block bars, bpftrace-style labels, under/overflow buckets, keyed selector)
+- [x] Top-table widget (sorted, tuple keys split, delta markers, inline bars)
+- [x] Scalar value, stats table, tseries sparkline
+- [x] Panel layout + focus cycling
+- [x] Coalescing under load: run a printf-flood script, UI stays responsive
+- [x] Snapshot tests per widget from fixtures
+
+Demo (tmux, fake bpftrace): a replayed session shows the `@syscalls` table with ↑/↓/+ and
+the `@usecs` histogram (Tab); `x` adds the exit-time `@final` panel. A 10M-line printf
+flood (`// fake: flood=`) keeps key latency at 10–20 ms with nothing dropped; the unit
+test `tui::tests::flood_is_coalesced_and_accounted_for` checks accounting under a slow
+consumer (delivered + dropped = sent, snapshots coalesced, exit last).
 
 ## M6 — Polish (optional, pick by value)
 - [ ] Export current run (NDJSON raw + text rendering) to a file

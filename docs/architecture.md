@@ -29,13 +29,15 @@ src/
     validate.rs      dry-run / probe-list strategies, worker pool, cache
     runner.rs        spawn, stream stdout/stderr → RunEvent, signals, timeouts
     json.rs          pure: &str → OutputMsg (see docs/bpftrace-json.md)
+    coalesce.rs      pure: hold run events while the UI lags (latest snapshot per map)
     command.rs       pure: build argv for run/validate (unit-test every case)
   model/             pure view-models derived from events
     run_state.rs     one run: phase, counters, log, latest snapshot per map
     log.rs           event log ring buffer (line joining, filter, eviction)
     form.rs          parameters form state → positional + named args
     describe.rs      one-line text for any OutputMsg (log summaries, --run)
-    hist.rs          bucket labels, scaling, keyed series (M5)
+    hist.rs          bpftrace-style bucket labels, trimming, eighth-block bars
+    panels.rs        one panel per map name: data, deltas, keyed selection, focus
   ui/
     mod.rs           draw(frame, &App) — routes to screens
     theme.rs         Gruvbox palette + semantic styles (ONLY place with colors)
@@ -44,7 +46,7 @@ src/
     source_view.rs   line numbers + highlighter (reuses discovery::lexer regions)
     run_view.rs      header + log (panel layout in M5)
     modals.rs        params form, run confirmation, yes/no question
-    widgets/         hist.rs, table.rs, log.rs, sparkline.rs, modal.rs, form.rs, filter.rs
+    widgets/         hist.rs, table.rs, value.rs, stats.rs, tseries.rs (one per panel kind)
   sys.rs             privilege check, lockdown detection, kernel release (/proc)
   headless.rs        `--list` / `--run <ID>`: debug entry points without the TUI
 ```
@@ -69,7 +71,8 @@ Elm-style loop, single owner of state:
 
 - `tokio` multi-thread runtime; UI loop runs in `main` via `block_on`.
 - Terminal input on a dedicated std thread doing blocking `event::read()` and
-  forwarding to the channel (avoids needing crossterm's `event-stream` feature).
+  forwarding to its own channel (avoids needing crossterm's `event-stream` feature).
+  Keys/signals are a separate, prioritized channel so run output can't delay them.
 - `App` never awaits and never does I/O. `Cmd`s describe I/O
   (`Cmd::Validate(ScriptId)`, `Cmd::StartRun{…}`, `Cmd::Signal(RunId, SIGINT)`,
   `Cmd::OpenEditor(path)`), executed by a small executor in `tui.rs`.
