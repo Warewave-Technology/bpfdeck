@@ -4,6 +4,7 @@
 pub mod command;
 pub mod json;
 pub mod runner;
+pub mod validate;
 
 use std::ffi::OsString;
 use std::io;
