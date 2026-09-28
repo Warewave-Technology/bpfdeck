@@ -72,6 +72,7 @@ Status glyph + color (theme roles in `src/ui/theme.rs`):
 | `✗` | Cannot run here (parse error, no probe matched, needs missing BTF…) | `Theme::error` |
 | `!` | Needs `--unsafe` | `Theme::warn` |
 | `…` | Validation pending | `Theme::muted` |
+| `?` | Not validated (bpftrace not found / not runnable) | `Theme::muted` |
 | `▶` | Currently running | `Theme::running` |
 
 Right pane, tabs (`Tab`/`Shift-Tab` or `1..3`):
@@ -212,7 +213,10 @@ runs will fail and the banner explains why.
 ### 6.6 Misc
 - `e` opens the selected script in `$EDITOR` (suspend TUI, restore after). Read-only
   for git sources: copy to a temp file and warn that edits are not saved to the repo.
-- `r` re-runs discovery + validation (e.g. after editing).
+- `r` re-runs discovery + validation (e.g. after editing). It does not fetch git sources
+  again (restart bpfdeck for that); unchanged scripts come back instantly from the
+  validation cache. Closing `$EDITOR` on a local script triggers the same rescan.
+- `$VISUAL`/`$EDITOR` (default `vi`) is split on whitespace and run without a shell.
 - Terminal min size 80×24; below that render a "terminal too small" message only.
 - Mouse: not required in v1.
 
@@ -243,6 +247,7 @@ See decisions D-005 for the planned privilege-separated model.
 | `/` | list, log | filter |
 | `Enter` | list | run (confirm dialog) |
 | `Tab`/`Shift-Tab`, `1-3` | detail | switch tab / panel |
+| `PgUp/PgDn`, `Ctrl-u/d` | detail | scroll the detail pane |
 | `e` | list | open in `$EDITOR` |
 | `r` | list | rescan + revalidate |
 | `x`, `Ctrl-C` | run view | stop run (SIGINT to bpftrace) |

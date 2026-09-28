@@ -8,9 +8,13 @@ tested without a terminal or a kernel.
 
 ```
 src/
-  main.rs            CLI (clap), runtime bootstrap, terminal init/restore, top-level loop
-  app.rs             App state + reducer: fn update(&mut self, Msg) -> Vec<Cmd>
+  main.rs            CLI (clap), runtime bootstrap, dispatch to tui / headless
+  tui.rs             terminal init/restore, input thread, signals, Msg loop, executor
+  app/               App state + reducer: fn update(&mut self, Msg) -> Vec<Cmd>
+    mod.rs
+    filter.rs        fuzzy filter (nucleo-matcher)
   msg.rs             Msg (input from the world) and Cmd (side effects to perform)
+  catalog.rs         resolve + discover + read + extract metadata (blocking)
   keymap.rs          Key → Action table per context; also feeds the help modal
   list.rs            `--list` debug output: discovery + metadata as a plain table
   source/            resolve <path|git-url> → local root dir
@@ -33,7 +37,8 @@ src/
     mod.rs           draw(frame, &App) — routes to screens
     theme.rs         Gruvbox palette + semantic styles (ONLY place with colors)
     browser.rs       list + detail tabs
-    source_view.rs   line numbers + highlighter
+    help.rs          `?` modal, generated from keymap.rs
+    source_view.rs   line numbers + highlighter (reuses discovery::lexer regions)
     run_view.rs      header + panel layout
     widgets/         hist.rs, table.rs, log.rs, sparkline.rs, modal.rs, form.rs, filter.rs
   sys.rs             privilege check, lockdown detection, kernel release (/proc)
@@ -63,8 +68,17 @@ Elm-style loop, single owner of state:
   forwarding to the channel (avoids needing crossterm's `event-stream` feature).
 - `App` never awaits and never does I/O. `Cmd`s describe I/O
   (`Cmd::Validate(ScriptId)`, `Cmd::StartRun{…}`, `Cmd::Signal(RunId, SIGINT)`,
-  `Cmd::OpenEditor(path)`), executed by a small executor in `main.rs`.
+  `Cmd::OpenEditor(path)`), executed by a small executor in `tui.rs`.
 - This makes `App::update` fully testable: feed `Msg`s, assert state and emitted `Cmd`s.
+- After each `Msg` the loop drains everything already queued, then draws once.
+- `$EDITOR` handoff: the input thread does every `poll`+`read` while holding a mutex
+  ("input gate"); the executor takes the gate, restores the terminal, runs the editor
+  (`block_in_place`), re-enters raw mode/alternate screen, then releases the gate. So no
+  keystroke meant for the editor is read by bpfdeck.
+- The validator is created by the `DetectEnv` task and published through a `OnceLock`;
+  the app only emits `Cmd::Validate` after `Msg::EnvDetected`, so it is always set.
+- UI state that depends on the pane size (detail scroll clamping) lives in a `Cell` on
+  `App`, written back by the renderer; everything else is plain reducer state.
 
 ## Child process handling
 

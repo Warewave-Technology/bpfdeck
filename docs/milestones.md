@@ -37,13 +37,18 @@ local `file://` repos with the real `git` binary (hooks-disabled check has a pos
       Tools: `sudo bpfdeck --list tests/fixtures/scripts` (validation column + details) and
       `sudo bpfdeck --run vfs_latency_demo.bt tests/fixtures/scripts` (Ctrl-C → exit dump).
 
-## M3 — Browser screen
-- [ ] Msg/Cmd loop, input thread, executor (architecture.md)
-- [ ] Script list with status glyphs, live validation updates
-- [ ] Detail tabs: Info, Source (line numbers + highlighter), Validation
-- [ ] `/` fuzzy filter, `r` rescan, `e` $EDITOR, `?` help from keymap table
-- [ ] Status bar: bpftrace version, kernel, privilege badge; lockdown banner
-- [ ] Snapshot tests 80×24 and 120×40
+## M3 — Browser screen ✅
+- [x] Msg/Cmd loop, input thread, executor (architecture.md)
+- [x] Script list with status glyphs, live validation updates
+- [x] Detail tabs: Info, Source (line numbers + highlighter), Validation
+- [x] `/` fuzzy filter, `r` rescan, `e` $EDITOR, `?` help from keymap table
+- [x] Status bar: bpftrace version, kernel, privilege badge; lockdown banner
+- [x] Snapshot tests 80×24 and 120×40
+
+Demo (driven in tmux against the fake bpftrace): list validates live via `-l` without
+root, `G` `2` shows highlighted source, `/tcpc` filters, `e` runs `$EDITOR` and the edit
+shows up after the automatic rescan, `?` opens/closes help, `q` and SIGTERM both exit 0
+with the terminal restored and no leftover processes.
 
 ## M4 — Run: confirm, params, log
 - [ ] Confirmation modal with exact argv and probe list; unsafe toggle + banner
