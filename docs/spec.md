@@ -87,7 +87,7 @@ Fuzzy filter: `/` opens an input line; matches name + description.
 Always shown before execution. Contents:
 - Script name and full path.
 - Exact command line that will run (after params), e.g.
-  `bpftrace -f json -B line /cache/…/biolatency.bt -- --interval=5`.
+  `bpftrace -f json -B line -- /cache/…/biolatency.bt --interval=5`.
 - Probes it will attach to.
 - Red banner if `--unsafe` would be required; the `--unsafe` flag is **off** by default and
   must be toggled explicitly in this dialog (`u`), and the banner stays.
@@ -182,7 +182,7 @@ Run on a bounded worker pool (default 4), results cached in memory keyed by
 `(sha256(content), bpftrace_version, kernel_release)`.
 
 Two strategies, chosen once at startup by capability detection (`bpftrace --help`):
-1. **Dry-run (preferred)**: `bpftrace --dry-run -q -f json <file> [-- dummy params]`.
+1. **Dry-run (preferred)**: `bpftrace --dry-run -q -f json -- <file> [dummy params]`.
    Parses, loads **and attaches** probes then exits. Exit 0 → `●`. Non-zero → `✗` with stderr.
    Requires privileges. Positional params the script needs get placeholder values
    (`0`) so the dry run does not fail on missing args; note this in the Validation tab.
@@ -196,8 +196,10 @@ Kernel lockdown / Secure Boot: detect `/sys/kernel/security/lockdown` containing
 runs will fail and the banner explains why.
 
 ### 6.5 Execution
-- Command: `[bpftrace] -f json -B line [--unsafe] <file> [positional…] [-- --named=val …]`.
-  Positional params go after the file and before `--`; named ones only after `--`.
+- Command: `[bpftrace] -f json -B line [--unsafe] -- <file> [positional…] [--named=val …]`.
+  The script and every parameter go after `--`, so no user value can become a bpftrace
+  option (D-013). Positional values starting with `--` are rejected (bpftrace would read
+  them as named params).
 - Spawn with `tokio::process::Command`, own process group (`process_group(0)`),
   `kill_on_drop(true)`, stdin null, stdout+stderr piped. No shell, ever.
 - stdout: line reader → `json::parse_line` → `RunEvent` → mpsc → app state.

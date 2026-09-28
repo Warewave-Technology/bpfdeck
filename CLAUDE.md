@@ -25,6 +25,8 @@ visualizes their `-f json` output live.
 cargo run -- tests/fixtures/scripts            # local dir
 cargo run -- https://github.com/bpftrace/bpftrace   # git source (tools/ inside)
 cargo run -- --bpftrace tests/fake_bpftrace/fake-bpftrace.sh tests/fixtures/scripts
+cargo run -- --list tests/fixtures/scripts     # headless: discovery + metadata + validation
+cargo run -- --run params_demo.bt --param 1234 --param=--verbose tests/fixtures/scripts
 sudo -E cargo run -- ...                       # real runs need root (D-005)
 cargo test                                     # must pass without root or bpftrace
 sudo -E cargo test -- --ignored                # real-kernel tests
@@ -69,11 +71,13 @@ accent=purple · key hints=orange · borders=bg3, focused=yellow · base bg0/fg.
 - On SIGINT bpftrace runs `END` and dumps remaining maps — capture it.
 - `--dry-run`: parse + load + attach, then exit. Needs root. Detect support via `--help`.
 - `-l '<probe>'` lists matching probes; `-l file.bt` lists a program's probes.
-- Params: positional `$1…` after the file; named `getopt("x", default)` only after `--`
-  as `--x=val` (booleans: `--x`).
+- Params: `bpftrace [opts] -- file.bt [positional…] [--x=val|--x]`. Always put the file and
+  all params after `--`: getopt permutes, so values could otherwise become options (D-013).
 - Kernel lockdown (Secure Boot) blocks bpftrace entirely → detect and explain.
 
 ## Current state
 M0 done: skeleton compiles and runs (`q` quits), docs and fixtures in place.
 M1 done: `source/` (local + git, D-012), `discovery/` (walk, lexer, metadata), `--list`.
-Next: **M2** in `docs/milestones.md`.
+M2 done except the manual real-host step: `bpftrace/` (json, command D-013, detect,
+runner, validate), `sys.rs`, fake bpftrace, headless `--list`/`--run`.
+Next: M2 manual step on RHEL 9 / Debian (needs a Linux host), then **M3**.

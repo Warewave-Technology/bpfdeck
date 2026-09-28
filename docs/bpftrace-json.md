@@ -43,7 +43,7 @@ Source of truth: `bpftrace(8)` (`-f json`) and bpftrace's own tests
   needed for labels if `[min, max+1)` is used everywhere.
 - Buckets with zero count can appear in the middle; keep them (they are visual gaps).
 
-## Rust model (target for `src/runner/json.rs`)
+## Rust model (`src/bpftrace/json.rs`)
 
 ```rust
 pub enum OutputMsg {

@@ -52,3 +52,13 @@ with `-` or containing whitespace/control characters are rejected and refs are p
 after `--`. Recognized URL prefixes: `https://`, `http://`, `ssh://`, `git://`, `file://`,
 `git@` (`file://` makes the git path testable without network). A failed first checkout
 removes the cache dir; a failed update keeps the old checkout and returns a warning. — accepted
+
+**D-013 — Script and all parameters go after `--`.** Refines spec §6.5. bpftrace parses
+options with GNU `getopt_long`, which permutes: an option-looking argument is an option
+anywhere on the command line unless it follows `--` (verified in `src/main.cpp`: after
+getopt the first remaining argument is the script, `--x[=v]` are named params, the rest
+positional). With the spec's `<file> <positional…> -- <named…>`, a positional value such
+as `--unsafe` or `-o /etc/passwd` would become a bpftrace option while running as root.
+So the argv is `bpftrace -f json -B line [--unsafe] -- <file> [positional…] [--name=v…]`
+(same for `--dry-run` and `-l -- <probe>`). bpftrace itself cannot tell a positional value
+starting with `--` from a named param, so the builder rejects such values. — accepted

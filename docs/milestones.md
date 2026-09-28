@@ -27,13 +27,15 @@ correct descriptions, `opensnoop.bt` → `--depth=35 --errname`). Git sync is te
 local `file://` repos with the real `git` binary (hooks-disabled check has a positive control).
 
 ## M2 — bpftrace integration (pure parts + fake bpftrace)
-- [ ] `bpftrace::json::parse_line` for every fixture in `tests/fixtures/json/`
-- [ ] `bpftrace::command` argv builder: positional vs `--` named params, unsafe flag, validate modes
-- [ ] Capability detection: version, `--dry-run` support (from `--help`), privileges, lockdown
-- [ ] `tests/fake_bpftrace/fake-bpftrace.sh` replaying fixtures, handling SIGINT with a final dump
-- [ ] Runner: spawn, stream, SIGINT→TERM→KILL escalation, exit status — tested with the fake
-- [ ] Validation worker pool + cache — tested with the fake (`--dry-run` success/failure paths)
+- [x] `bpftrace::json::parse_line` for every fixture in `tests/fixtures/json/`
+- [x] `bpftrace::command` argv builder: positional vs `--` named params, unsafe flag, validate modes (D-013)
+- [x] Capability detection: version, `--dry-run` support (from `--help`), privileges, lockdown
+- [x] `tests/fake_bpftrace/fake-bpftrace.sh` replaying fixtures, handling SIGINT with a final dump
+- [x] Runner: spawn, stream, SIGINT→TERM→KILL escalation, exit status — tested with the fake
+- [x] Validation worker pool + cache — tested with the fake (`--dry-run` success/failure paths)
 - [ ] **Manual on real hosts**: capture `real_*` fixtures (see docs/bpftrace-json.md checklist)
+      Tools: `sudo bpfdeck --list tests/fixtures/scripts` (validation column + details) and
+      `sudo bpfdeck --run vfs_latency_demo.bt tests/fixtures/scripts` (Ctrl-C → exit dump).
 
 ## M3 — Browser screen
 - [ ] Msg/Cmd loop, input thread, executor (architecture.md)

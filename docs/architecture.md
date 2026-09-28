@@ -36,7 +36,8 @@ src/
     source_view.rs   line numbers + highlighter
     run_view.rs      header + panel layout
     widgets/         hist.rs, table.rs, log.rs, sparkline.rs, modal.rs, form.rs, filter.rs
-  sys.rs             privilege check, lockdown detection, kernel release (uname)
+  sys.rs             privilege check, lockdown detection, kernel release (/proc)
+  headless.rs        `--list` / `--run <ID>`: debug entry points without the TUI
 ```
 
 ## Concurrency model
@@ -94,7 +95,11 @@ Elm-style loop, single owner of state:
 
 - Everything in `discovery/`, `bpftrace/json.rs`, `bpftrace/command.rs`, `model/`
   is pure → unit tests over `tests/fixtures/`.
-- `bpftrace/runner.rs` is tested against a **fake bpftrace**: a small shell script in
-  `tests/fake_bpftrace/` that replays an `.ndjson` fixture with delays, handles SIGINT
-  by printing a final `hist` line, and exits. Point `--bpftrace` at it.
+- `bpftrace/runner.rs` and `validate.rs` are tested against a **fake bpftrace**: a POSIX
+  sh script in `tests/fake_bpftrace/` that answers `--version`/`--help`/`-l`/`--dry-run`,
+  replays an `.ndjson` fixture with delays, handles SIGINT by printing a final `hist`
+  line, and exits. Tests drive it with `// fake: key=value` directives inside the test
+  script (see the header of `fake-bpftrace.sh`), not env vars, so parallel tests stay
+  isolated. `fake-bpftrace-old.sh` is an old version without `--dry-run`. Point
+  `--bpftrace` at either.
 - Real-kernel tests are `#[ignore]` and run manually with `sudo -E cargo test -- --ignored`.
