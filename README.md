@@ -35,6 +35,14 @@ CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld \
   cargo build --release --target x86_64-unknown-linux-musl
 ```
 
+## Remote hosts
+Today: copy the static binary and run the TUI there over SSH (scripts must be on that host,
+or use a git URL it can reach):
+```sh
+scp bpfdeck server01:/tmp/ && ssh -t server01 sudo /tmp/bpfdeck https://github.com/bpftrace/bpftrace
+```
+Driving a remote host from the local TUI is proposed in `docs/design-remote.md`.
+
 ## Keys worth knowing
 `Enter` run (params form → confirmation) · `x` stop (SIGINT, keeps the exit-time dump) ·
 `Tab` next panel · `w` export the run (`.txt` report + raw `.ndjson`, see `--export-dir`) ·
