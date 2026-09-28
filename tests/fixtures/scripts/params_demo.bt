@@ -1,0 +1,21 @@
+#!/usr/bin/env bpftrace
+// params_demo.bt	Positional and named parameters fixture.
+//
+// USAGE: params_demo.bt <pid> -- --interval=5 --verbose
+//   $1          target pid (positional, required)
+//   --interval  print interval in seconds (named, default 1)
+//   --verbose   boolean flag
+
+tracepoint:syscalls:sys_enter_openat
+/pid == $1/
+{
+  @opens[str(args.filename)] = count();
+  if (getopt("verbose")) {
+    printf("%s\n", str(args.filename));
+  }
+}
+
+interval:s:1
+{
+  print(@opens);
+}

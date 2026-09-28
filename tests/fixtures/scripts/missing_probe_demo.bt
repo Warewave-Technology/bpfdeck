@@ -1,0 +1,8 @@
+#!/usr/bin/env bpftrace
+// missing_probe_demo.bt	Attaches to a kernel function that does not exist.
+//				Must be shown as "cannot run here" with the probe name.
+
+kprobe:this_function_does_not_exist_bpfdeck
+{
+  @[comm] = count();
+}

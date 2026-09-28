@@ -1,0 +1,8 @@
+#!/usr/bin/env bpftrace
+// tcpconnect_demo.bt	Print TCP connect() calls. Fixture for printf/log rendering
+//			and for nested-directory discovery.
+
+kprobe:tcp_connect
+{
+  printf("%-8d %-16s\n", pid, comm);
+}

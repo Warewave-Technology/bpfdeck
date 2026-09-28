@@ -1,0 +1,4 @@
+#!/usr/bin/env bpftrace
+// shebang_no_ext	Discovered via shebang, not extension.
+
+BEGIN { printf("hi\n"); exit(); }

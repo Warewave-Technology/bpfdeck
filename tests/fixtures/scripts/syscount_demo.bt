@@ -1,0 +1,16 @@
+#!/usr/bin/env bpftrace
+// syscount_demo.bt	Count syscalls by process name, printed every second.
+//			Fixture for bpfdeck discovery + map rendering.
+//
+// USAGE: syscount_demo.bt
+
+tracepoint:raw_syscalls:sys_enter
+{
+  @syscalls[comm] = count();
+}
+
+interval:s:1
+{
+  print(@syscalls, 10);
+  clear(@syscalls);
+}

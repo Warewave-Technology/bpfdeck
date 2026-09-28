@@ -1,0 +1,1 @@
+tracepoint:sched:sched_process_exec { printf("%s\n", comm); }

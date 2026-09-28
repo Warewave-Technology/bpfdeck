@@ -1,0 +1,31 @@
+[package]
+name = "bpfdeck"
+version = "0.1.0"
+edition = "2024"
+description = "Browse, validate and run bpftrace scripts from a directory or git repo, with live visualization"
+publish = false
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+directories = "6.0.0"
+hex = "0.4.3"
+nix = { version = "0.31.3", features = ["signal", "process", "user"] }
+ratatui = "0.30.2"
+regex = "1.13.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+sha2 = "0.11.0"
+thiserror = "2.0.21"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "signal"] }
+
+[dev-dependencies]
+insta = "1.48.0"
+pretty_assertions = "1.4.1"
+tempfile = "3.27.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "unwind" # keep unwind so the terminal is restored and the child is killed on panic

@@ -1,0 +1,77 @@
+#![allow(dead_code)] // palette is consumed incrementally across milestones
+//! Gruvbox dark palette. Every color in the UI must come from here.
+//! Reference: https://github.com/morhetz/gruvbox (dark, medium contrast).
+
+use ratatui::style::{Color, Modifier, Style};
+
+pub const BG0_H: Color = Color::Rgb(0x1d, 0x20, 0x21);
+pub const BG0: Color = Color::Rgb(0x28, 0x28, 0x28);
+pub const BG1: Color = Color::Rgb(0x3c, 0x38, 0x36);
+pub const BG2: Color = Color::Rgb(0x50, 0x49, 0x45);
+pub const BG3: Color = Color::Rgb(0x66, 0x5c, 0x54);
+pub const FG0: Color = Color::Rgb(0xfb, 0xf1, 0xc7);
+pub const FG: Color = Color::Rgb(0xeb, 0xdb, 0xb2);
+pub const FG4: Color = Color::Rgb(0xa8, 0x99, 0x84);
+pub const GRAY: Color = Color::Rgb(0x92, 0x83, 0x74);
+
+pub const RED: Color = Color::Rgb(0xfb, 0x49, 0x34);
+pub const GREEN: Color = Color::Rgb(0xb8, 0xbb, 0x26);
+pub const YELLOW: Color = Color::Rgb(0xfa, 0xbd, 0x2f);
+pub const BLUE: Color = Color::Rgb(0x83, 0xa5, 0x98);
+pub const PURPLE: Color = Color::Rgb(0xd3, 0x86, 0x9b);
+pub const AQUA: Color = Color::Rgb(0x8e, 0xc0, 0x7c);
+pub const ORANGE: Color = Color::Rgb(0xfe, 0x80, 0x19);
+
+/// Semantic roles. Widgets use these, not raw colors.
+pub struct Theme;
+
+impl Theme {
+    pub fn base() -> Style {
+        Style::new().fg(FG).bg(BG0)
+    }
+    pub fn border() -> Style {
+        Style::new().fg(BG3)
+    }
+    pub fn border_focused() -> Style {
+        Style::new().fg(YELLOW)
+    }
+    pub fn title() -> Style {
+        Style::new().fg(YELLOW).add_modifier(Modifier::BOLD)
+    }
+    pub fn selected() -> Style {
+        Style::new().fg(FG0).bg(BG2).add_modifier(Modifier::BOLD)
+    }
+    pub fn muted() -> Style {
+        Style::new().fg(GRAY)
+    }
+    pub fn status_bar() -> Style {
+        Style::new().fg(FG4).bg(BG1)
+    }
+    pub fn key_hint() -> Style {
+        Style::new().fg(ORANGE).add_modifier(Modifier::BOLD)
+    }
+    /// Script can run on this kernel.
+    pub fn ok() -> Style {
+        Style::new().fg(GREEN)
+    }
+    /// Some probes missing / needs --unsafe / unknown.
+    pub fn warn() -> Style {
+        Style::new().fg(YELLOW)
+    }
+    /// Cannot run here.
+    pub fn error() -> Style {
+        Style::new().fg(RED)
+    }
+    pub fn running() -> Style {
+        Style::new().fg(AQUA).add_modifier(Modifier::BOLD)
+    }
+    pub fn hist_bar() -> Style {
+        Style::new().fg(BLUE)
+    }
+    pub fn accent() -> Style {
+        Style::new().fg(PURPLE)
+    }
+    pub fn popup_bg() -> Style {
+        Style::new().fg(FG).bg(BG0_H)
+    }
+}

@@ -1,0 +1,9 @@
+#!/usr/bin/env bpftrace
+// unsafe_demo.bt	Uses system(); requires --unsafe. bpfdeck must flag this
+//			script and never pass --unsafe without explicit confirmation.
+
+BEGIN
+{
+  system("uptime");
+  exit();
+}

@@ -1,0 +1,5 @@
+{"type": "attached_probes", "count": 3, "data": {"probes": 3}}
+{"type": "printf", "data": "Tracing block device I/O... Hit Ctrl-C to end.\n"}
+{"type": "map", "data": {"@syscalls": {"bash": 12, "sshd": 40, "node": 311}}}
+{"type": "map", "data": {"@syscalls": {"bash": 3, "sshd": 55, "node": 290, "curl": 7}}}
+{"type": "hist", "data": {"@usecs": [{"min": 0, "max": 0, "count": 2}, {"min": 1, "max": 1, "count": 0}, {"min": 2, "max": 3, "count": 5}, {"min": 4, "max": 7, "count": 19}, {"min": 8, "max": 15, "count": 64}, {"min": 16, "max": 31, "count": 210}, {"min": 32, "max": 63, "count": 95}, {"min": 64, "max": 127, "count": 11}, {"min": 128, "max": 255, "count": 1}]}}
