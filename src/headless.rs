@@ -14,38 +14,17 @@ use crate::bpftrace::command::{self, NamedArg, NamedValue, RunArgs};
 use crate::bpftrace::json::{Bucket, HistSeries, MapValue, OutputMsg};
 use crate::bpftrace::runner::{self, Escalation, RunEvent, RunExit};
 use crate::bpftrace::validate::{self, Strategy, ValidationRequest, Validator};
-use crate::discovery::metadata::{self, Metadata};
-use crate::discovery::{self, ScriptFile};
+use crate::catalog::{self, Catalog, Script};
 use crate::list::{self, Row};
 use crate::{bpftrace, source, sys};
 
-struct Loaded {
-    resolved: source::ResolvedSource,
-    scripts: Vec<(ScriptFile, String, Metadata)>,
-}
-
-fn load(input: &str) -> Result<Loaded> {
-    let cache_root = source::default_cache_root()?;
-    let resolved = source::resolve(input, &cache_root).with_context(|| format!("resolving {input}"))?;
-    let found = match &resolved.file {
-        Some(file) => discovery::single_file(file)?,
-        None => discovery::walk(&resolved.root)?,
-    };
-    for warning in resolved.warnings.iter().chain(&found.warnings) {
+/// Load the catalog and print its warnings to stderr.
+fn load(input: &str) -> Result<Catalog> {
+    let catalog = catalog::load(input, &source::default_cache_root()?)?;
+    for warning in &catalog.warnings {
         eprintln!("warning: {warning}");
     }
-    let mut scripts = Vec::with_capacity(found.scripts.len());
-    for file in found.scripts {
-        match std::fs::read(&file.path) {
-            Ok(bytes) => {
-                let src = String::from_utf8_lossy(&bytes).into_owned();
-                let meta = metadata::extract(&src);
-                scripts.push((file, src, meta));
-            }
-            Err(e) => eprintln!("warning: cannot read {}: {e}", file.id),
-        }
-    }
-    Ok(Loaded { resolved, scripts })
+    Ok(catalog)
 }
 
 fn runtime() -> Result<tokio::runtime::Runtime> {
@@ -54,7 +33,7 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
 
 pub fn list(input: &str, bpftrace_path: &Path) -> Result<()> {
     let loaded = load(input)?;
-    let resolved = &loaded.resolved;
+    let resolved = &loaded.source;
     match &resolved.origin {
         source::Origin::Local => println!("source: local {}", resolved.root.display()),
         source::Origin::Git { spec, outcome } => println!(
@@ -70,9 +49,9 @@ pub fn list(input: &str, bpftrace_path: &Path) -> Result<()> {
         .scripts
         .into_iter()
         .zip(validations)
-        .map(|((file, _, meta), validation)| Row {
-            file,
-            meta,
+        .map(|(script, validation)| Row {
+            file: script.file,
+            meta: script.meta,
             validation,
         })
         .collect();
@@ -82,10 +61,7 @@ pub fn list(input: &str, bpftrace_path: &Path) -> Result<()> {
 }
 
 /// One result per script, in order; all `None` when bpftrace is not usable here.
-async fn validate_all(
-    bpftrace_path: &Path,
-    scripts: &[(ScriptFile, String, Metadata)],
-) -> Vec<Option<validate::Validation>> {
+async fn validate_all(bpftrace_path: &Path, scripts: &[Script]) -> Vec<Option<validate::Validation>> {
     let host = sys::detect();
     let info = match bpftrace::detect(bpftrace_path).await {
         Ok(info) => info,
@@ -115,8 +91,8 @@ async fn validate_all(
         validate::DEFAULT_TIMEOUT,
     ));
     let mut tasks = tokio::task::JoinSet::new();
-    for (i, (file, src, meta)) in scripts.iter().enumerate() {
-        let req = ValidationRequest::new(&file.path, src, meta);
+    for (i, script) in scripts.iter().enumerate() {
+        let req = ValidationRequest::new(&script.file.path, &script.content, &script.meta);
         let validator = validator.clone();
         tasks.spawn(async move { (i, validator.validate(&req).await) });
     }
@@ -134,11 +110,12 @@ async fn validate_all(
 /// anything else positional. Never `--unsafe` (D-009).
 pub fn run(input: &str, bpftrace_path: &Path, id: &str, params: &[String]) -> Result<ExitCode> {
     let loaded = load(input)?;
-    let (file, _, _) = loaded
+    let file = &loaded
         .scripts
         .iter()
-        .find(|(f, _, _)| f.id == id)
-        .ok_or_else(|| anyhow!("no script with ID {id:?} (see --list)"))?;
+        .find(|s| s.file.id == id)
+        .ok_or_else(|| anyhow!("no script with ID {id:?} (see --list)"))?
+        .file;
 
     let mut positional = Vec::new();
     let mut named = Vec::new();

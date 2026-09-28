@@ -1,5 +1,6 @@
 mod app;
 mod bpftrace;
+mod catalog;
 mod discovery;
 mod headless;
 mod list;
