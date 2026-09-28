@@ -89,5 +89,6 @@ M4 done except the real-host test: run flow (form → confirm → run view, D-01
 M5 done: panels (`model/hist.rs`, `model/panels.rs`, `ui/widgets/`), coalescing forwarder
 (`bpftrace/coalesce.rs`), prioritized input channel + frame budget in `tui.rs`.
 M6 (partial): export (`w`, spool), release workflow (D-015), real-kernel harness (D-016).
-Open: tree view, privilege separation (design first), rename (owner's call), RHEL/Debian 12
-host checks. Remote `origin` is set; nothing pushed until release.
+Tree view done (D-019); name final (D-017); root is the model (D-018).
+Open: remote execution — design in docs/design-remote.md, **awaiting owner approval**;
+RHEL/Debian 12 host checks. Remote `origin` is set; nothing pushed until release.

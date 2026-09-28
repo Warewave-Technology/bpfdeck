@@ -52,8 +52,14 @@ bpfdeck <path|git-url>
 ### 5.1 Browser (default screen)
 Two panes + status bar.
 
-Left: script list, grouped by directory (collapsible tree or flat list with a dim path
-prefix — pick flat first, tree later). Each row:
+Left: script list, grouped by directory: a collapsible tree (default when scripts live in
+subdirectories) or a flat list with a dim path prefix (`t` toggles). In the tree,
+directory rows show `▾`/`▸`, the name and how many scripts are below; `Enter` or `→`/`l`
+opens, `←`/`h` closes or jumps to the parent directory. With more than 30 scripts the
+tree starts with its top-level directories closed (an overview on the first screen).
+While a filter is active the list is flat and ranked; clearing it returns to the tree,
+opening the directories above the selected script. A selected directory shows a summary
+(script count per validation status) in the detail pane. Each script row:
 
 ```
 ● biolatency        Block I/O latency as a histogram.
@@ -300,6 +306,8 @@ See decisions D-005 for the planned privilege-separated model.
 |---|---|---|
 | `j/k`, `↑/↓` | list | move |
 | `g/G` | list | top/bottom |
+| `t` | list | tree / flat list |
+| `h/l`, `←/→`, `Enter` on a dir | tree | collapse (or go to parent) / expand / toggle |
 | `/` | list, log | filter |
 | `Enter` | list | run (confirm dialog) |
 | `Tab`/`Shift-Tab`, `1-3` | detail | switch tab / panel |

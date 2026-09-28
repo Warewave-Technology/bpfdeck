@@ -84,3 +84,16 @@ Without a Linux host at hand, `tests/realhost/` runs bpfdeck against bpftrace 0.
 OrbStack's kernel. It found a real bug (0.23's unsafe wording) and two UX problems
 (helper-error floods, far outliers in histograms) that the fake could not. It does not
 replace the RHEL/Debian checks of D-008; see docs/real-kernel-testing.md. — accepted
+
+**D-017 — The name stays `bpfdeck`.** Supersedes D-011 (owner's call, 2026-09-29): crate,
+binary, cache dir and docs keep the name. — accepted
+
+**D-018 — Running as root is the model, not a stopgap.** Supersedes the "revisit after M5"
+part of D-005: bpfdeck is an admin tool; privilege separation (unprivileged TUI, `sudo -n`
+or setcap helper) is not planned. Remote execution (docs/design-remote.md) follows the
+same model on the remote side. — accepted
+
+**D-019 — Tree view is the default for scripts in subdirectories.** The flat list stays
+for flat collections and for filter results (fuzzy ranking does not map onto a tree).
+Rows are derived from the filtered script list on each change (`app/tree.rs`, pure), so
+the filter, validation and run state need no tree awareness. — accepted

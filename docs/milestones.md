@@ -83,9 +83,9 @@ consumer (delivered + dropped = sent, snapshots coalesced, exit last).
 
 ## M6 — Polish (optional, pick by value)
 - [x] Export current run (NDJSON raw + text rendering) to a file (`w`, spec §6.6)
-- [ ] Tree view for script list — skipped for now: the filter already matches directories
-- [ ] Privilege separation (D-005 v2) — needs a design discussion first
+- [x] Tree view for script list (D-019)
+- [x] ~~Privilege separation (D-005 v2)~~ — dropped: root is the model (D-018)
 - [x] Static musl build + GitHub release workflow (x86_64, aarch64) (D-015; not pushed yet)
-- [ ] Rename (D-011) — the owner picks the name
+- [x] Rename (D-011) — the name stays `bpfdeck` (D-017)
 - [x] (added) Real-kernel harness `tests/realhost/` (D-016) and the fixes it led to:
       unsafe wording of bpftrace 0.23, repeated-error collapsing, empty-bucket collapsing
