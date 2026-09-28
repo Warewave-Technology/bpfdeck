@@ -22,41 +22,72 @@ impl Masked {
     }
 }
 
-pub fn mask(src: &str) -> Masked {
+/// What each source byte belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Region {
+    Code,
+    Comment,
+    /// A `"` that opens or closes a string literal.
+    Quote,
+    /// String literal content, escapes included.
+    StringBody,
+}
+
+/// Classify every byte of `src`. Strings end at a newline if unterminated; block comments
+/// at EOF. Multi-byte characters never straddle two regions.
+pub fn regions(src: &str) -> Vec<Region> {
     let bytes = src.as_bytes();
-    let mut code = bytes.to_vec();
-    let mut structure = bytes.to_vec();
+    let mut out = vec![Region::Code; bytes.len()];
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
             b'/' if bytes.get(i + 1) == Some(&b'/') => {
                 while i < bytes.len() && bytes[i] != b'\n' {
-                    blank(&mut code, &mut structure, i);
+                    out[i] = Region::Comment;
                     i += 1;
                 }
             }
             b'/' if bytes.get(i + 1) == Some(&b'*') => {
                 let end = find_block_comment_end(bytes, i + 2);
-                for j in i..end {
-                    blank(&mut code, &mut structure, j);
-                }
+                out[i..end].fill(Region::Comment);
                 i = end;
             }
             b'"' => {
+                out[i] = Region::Quote;
                 i += 1;
                 while i < bytes.len() && bytes[i] != b'"' && bytes[i] != b'\n' {
                     let escaped = bytes[i] == b'\\';
-                    structure[i] = b'x';
+                    out[i] = Region::StringBody;
                     i += 1;
                     if escaped && i < bytes.len() && bytes[i] != b'\n' {
-                        structure[i] = b'x';
+                        out[i] = Region::StringBody;
                         i += 1;
                     }
                 }
-                // Closing quote (or newline / EOF for an unterminated string).
+                if bytes.get(i) == Some(&b'"') {
+                    out[i] = Region::Quote;
+                }
+                // Past the closing quote (or the newline / EOF of an unterminated string).
                 i += 1;
             }
             _ => i += 1,
+        }
+    }
+    out
+}
+
+pub fn mask(src: &str) -> Masked {
+    let bytes = src.as_bytes();
+    let mut code = bytes.to_vec();
+    let mut structure = bytes.to_vec();
+    for (i, region) in regions(src).into_iter().enumerate() {
+        match region {
+            Region::Comment if bytes[i] != b'\n' => {
+                code[i] = b' ';
+                structure[i] = b' ';
+            }
+            Region::StringBody => structure[i] = b'x',
+            _ => {}
         }
     }
     Masked {
@@ -78,13 +109,6 @@ fn find_block_comment_end(bytes: &[u8], from: usize) -> usize {
     bytes.len()
 }
 
-fn blank(code: &mut [u8], structure: &mut [u8], i: usize) {
-    if code[i] != b'\n' {
-        code[i] = b' ';
-        structure[i] = b' ';
-    }
-}
-
 /// One top-level probe block header: `probe[, probe…] [/predicate/] {`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbeBlock {
@@ -94,6 +118,8 @@ pub struct ProbeBlock {
     pub predicate: Option<String>,
     /// 1-based line of the first probe.
     pub line: usize,
+    /// Byte range of the probe list in the source (comments inside it included).
+    pub list_span: std::ops::Range<usize>,
 }
 
 /// Keywords that open a top-level `{ … }` block which is not a probe.
@@ -194,6 +220,7 @@ fn parse_header(masked: &Masked, start: usize, end: usize) -> Option<ProbeBlock>
         probes,
         predicate,
         line,
+        list_span: start + leading_ws..start + list.trim_end().len(),
     })
 }
 
@@ -316,6 +343,21 @@ mod tests {
         let src = "// hdr\n\nBEGIN {}\n\n  kprobe:x,\nkprobe:y {}";
         let lines: Vec<_> = probe_blocks(&mask(src)).into_iter().map(|b| b.line).collect();
         assert_eq!(lines, vec![3, 5]);
+    }
+
+    #[test]
+    fn regions_and_list_spans() {
+        let src = "k:a, /* c */ k:b /x/ { printf(\"a\\\"b\"); }";
+        let r = regions(src);
+        let at = |needle: &str| src.find(needle).expect("needle");
+        assert_eq!(r[at("/* c")], Region::Comment);
+        assert_eq!(r[at("\"a")], Region::Quote);
+        assert_eq!(r[at("a\\")], Region::StringBody);
+        assert_eq!(r[at("b\")") + 1], Region::Quote);
+        assert_eq!(r[at("printf")], Region::Code);
+
+        let blocks = probe_blocks(&mask(src));
+        assert_eq!(&src[blocks[0].list_span.clone()], "k:a, /* c */ k:b");
     }
 
     #[test]
