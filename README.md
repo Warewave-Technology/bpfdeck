@@ -50,7 +50,8 @@ has to ask for a passphrase or password, bpfdeck hands it the terminal. Details:
 
 ## Keys worth knowing
 `Enter` run (params form → confirmation) · `x` stop (SIGINT, keeps the exit-time dump) ·
-`c` connect a host · `<` `>` target tabs ·
+`c` connect a host · `<` `>` target tabs · `d` disconnect · `i` edit a script inline
+(a draft: the file is never changed; `u` switches back to the original) ·
 `Tab` next panel · `w` export the run (`.txt` report + raw `.ndjson`, see `--export-dir`) ·
 `?` all keys.
 

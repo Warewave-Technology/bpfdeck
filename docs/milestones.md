@@ -81,6 +81,13 @@ flood (`// fake: flood=`) keeps key latency at 10–20 ms with nothing dropped; 
 test `tui::tests::flood_is_coalesced_and_accounted_for` checks accounting under a slow
 consumer (delivered + dropped = sent, snapshots coalesced, exit last).
 
+## M8 — Fleet mode (docs/design-fleet.md, D-024)
+- [ ] F1 Host list in the connect dialog (parse + expand), parallel checks, per-host rows
+- [ ] F2 Validation matrix in the Validation tab, disagreement count in the list
+- [ ] F3 Target checklist in the confirmation, `FleetRun`, start/stop/quit on the group
+- [ ] F4 `model/compare.rs` + compare tab: hist percentiles/merge, key × host tables, outliers
+- [ ] F5 Fleet export, spec/README/D-entries, end-to-end with 3 sshd containers
+
 ## M7 — Remote targets over SSH (docs/design-remote.md) ✅
 - [x] R1 Targets in the app model; bottom results pane with one tab per target (D-021)
 - [x] R2 Embedded runner + session protocol; SSH backend for capture/run; `tests/fake_ssh`
@@ -88,7 +95,7 @@ consumer (delivered + dropped = sent, snapshots coalesced, exit last).
 - [x] R4 Validation on connect, host in confirmation and exports, lost connection + reconnect
 - [x] R5 Real end-to-end against sshd containers (root, NOPASSWD, password sudo;
       `tests/realhost/sshd.sh`), docs; fixes it found are in D-022
-- [ ] Later: fleet mode (one script on several targets), validation matrix script × host
+- [x] (added) `d` shown as a hint on remote tabs; inline editing with session drafts (D-025)
 
 ## M6 — Polish (optional, pick by value)
 - [x] Export current run (NDJSON raw + text rendering) to a file (`w`, spec §6.6)

@@ -93,5 +93,6 @@ M6 (partial): export (`w`, spool), release workflow (D-015), real-kernel harness
 Tree view done (D-019); name final (D-017); root is the model (D-018).
 M7 done: remote targets over SSH, agentless (docs/design-remote.md, D-020…D-023):
 `remote/`, `app/target.rs`, `app/connect.rs`, `ui/results.rs`, `tests/fake_ssh/`,
-`tests/realhost/sshd.sh`. Next: fleet mode (one script on several targets).
+`tests/realhost/sshd.sh`. Inline editing with session drafts (D-025).
+Next: **M8 fleet mode** (docs/design-fleet.md, approved D-024), starting with F1.
 Open: RHEL/Debian 12 host checks. Remote `origin` is set; nothing pushed until release.

@@ -1,6 +1,6 @@
 # Fleet mode: one script on several targets — design proposal
 
-**Status: proposal, awaiting the owner's approval. Nothing here is implemented.**
+**Status: approved as proposed (D-024, 2026-09-29); implementation starts with F1.**
 Builds on the remote targets (docs/design-remote.md, D-020…D-023). Questions are at the end.
 
 ## Goal

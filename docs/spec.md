@@ -30,7 +30,7 @@ output as live histograms, top-tables and a filterable event log — in a Gruvbo
 ### Out of scope (v1) — do not build, do not stub
 - BCC Python tools, libbpf/CO-RE binaries, raw BPF object files.
 - Fleet mode: one script on several hosts at once (targets are tabs so it can come later).
-- Editing scripts inside the TUI (open in `$EDITOR` is fine, see §6.6).
+- Writing edits back to the source (inline edits are session drafts, §6.8, D-025).
 - Persisting run history to disk (M6 is optional export only).
 - Any network access other than the `git` subprocess for cloning and `ssh` for targets.
 
@@ -88,6 +88,7 @@ Right pane, tabs (`Tab`/`Shift-Tab` or `1..3`):
    parameters detected, flags (unsafe, uses `-c`/`-p` semantics hint), file path, size.
 2. **Source** — the script with line numbers and light syntax highlighting (comments,
    strings, probe lines, builtins, `@maps`). Hand-written highlighter, no tree-sitter in v1.
+   `i` edits the script right here (§6.8).
 3. **Validation** — raw stderr of the last dry-run / probe check, verbatim.
 
 Fuzzy filter: `/` opens an input line; matches name + description.
@@ -292,6 +293,13 @@ runs will fail and the banner explains why.
   again (restart bpfdeck for that); unchanged scripts come back instantly from the
   validation cache. Closing `$EDITOR` on a local script triggers the same rescan.
 - `$VISUAL`/`$EDITOR` (default `vi`) is split on whitespace and run without a shell.
+- Inline editing (D-025): `i` turns the Source tab into an editor (full width, cursor,
+  auto-indent, `Ctrl-Z` undo, `Esc` done). The result is a **draft** for this session:
+  the source file is never written. While the draft is active, the list marks the script
+  `✎`, and validation (on every target) and runs use the edited version; `u` switches
+  between the original and the draft without losing either. Editing back to the original
+  text drops the draft. bpftrace reads a private copy (`<cache>/drafts/<pid>/`, 0700/0600,
+  removed on exit); a remote run sends the edited text. Drafts survive a rescan.
 - Terminal min size 80×24; below that render a "terminal too small" message only.
 - Mouse: not required in v1.
 
@@ -347,6 +355,8 @@ the login (root), `sudo -n`, or `sudo -S` with the password from the connect dia
 | `Tab`/`Shift-Tab`, `1-3` | detail | switch tab / panel |
 | `PgUp/PgDn`, `Ctrl-u/d` | detail | scroll the detail pane |
 | `e` | list | open in `$EDITOR` |
+| `i` | list | edit inline (draft, `Esc` done, `Ctrl-Z` undo) |
+| `u` | list | switch between the original and the edited version |
 | `r` | list | rescan + revalidate |
 | `x`, `Ctrl-C` | run view | stop run (SIGINT to bpftrace) |
 | `j/k`, `PgUp/PgDn`, `g/G` | run view | scroll the log (up pauses, `G` follows) |

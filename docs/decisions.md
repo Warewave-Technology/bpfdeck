@@ -132,3 +132,19 @@ zsh; not dash or bash 3.2). Real bpftrace installs its own handler, so on hosts 
 matters for shell wrappers around bpftrace; for tests, the fake host's `sh`
 (`tests/fake_ssh/bin/sh`) prefers zsh or bash 5 so the fake bpftrace sees the SIGINT and
 prints its exit-time dump. — accepted
+
+**D-024 — Fleet mode as proposed.** The owner approved docs/design-fleet.md unchanged
+(2026-09-29): 2–20 targets; the target checklist in the run confirmation (no new key);
+the compare tab (per-host percentiles, merged hist with `m`, key × host tables, `◀` at 3×
+the median); a host list with `{a..b}` ranges in the connect dialog with one sudo mode for
+all; hosts whose validation failed unchecked by default but selectable. — accepted
+
+**D-025 — Inline editing makes session drafts, never writes the source.** Owner's request
+(2026-09-29), supersedes the "no editing inside the TUI" line of spec §3. The typical case
+is tweaking a script from a git source (a cache, not the user's files) before running it
+on a host. So `i` edits in the Source tab and `Esc` keeps the result as a draft; the
+original stays as scanned, `u` flips between the two, and editing back to the original
+drops the draft. bpftrace reads the draft from a private copy the executor writes
+(the app does no I/O); the copy is validated and run like any script, cached by its
+content hash, and removed on exit. A small hand-written buffer (`model/editor.rs`) instead
+of a new crate: no dependency to approve, and scripts are small. — accepted
