@@ -120,6 +120,7 @@ impl Run {
 
     pub fn output(&mut self, msg: OutputMsg, at: Instant) {
         let now = self.run_time(at);
+        self.log.set_now(now);
         if self.panels.apply(&msg, now) {
             return;
         }
@@ -147,6 +148,7 @@ impl Run {
 
     pub fn stderr(&mut self, line: &str) {
         self.errors += 1;
+        self.log.set_now(self.elapsed);
         self.log.push_line(LogKind::Error, line);
     }
 

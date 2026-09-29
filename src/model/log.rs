@@ -1,9 +1,10 @@
 //! Event log ring buffer (spec §5.4): bounded, line-oriented, filterable.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
+use std::time::Duration;
 
 pub const DEFAULT_CAPACITY: usize = 10_000;
-/// How far back an error/raw line looks for an identical line to count as a repeat.
+/// How far back a raw line looks for an identical line to count as a repeat.
 const REPEAT_LOOKBACK: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,17 +25,27 @@ pub struct LogLine {
     pub seq: u64,
     pub kind: LogKind,
     pub text: String,
-    /// How many identical consecutive error/raw lines this line stands for (≥ 1).
+    /// How many identical lines this line stands for (≥ 1): every repeat of an error
+    /// (D-027), identical raw lines in a row.
     pub repeat: u64,
+    /// Run time of the latest repeat.
+    pub last: Duration,
     /// Output text not terminated by `\n` yet: the next output continues it.
     open: bool,
 }
 
 impl LogLine {
-    /// The text with a `(×N)` suffix for collapsed repeats.
+    /// The text with a `(×N, last mm:ss)` suffix for collapsed repeats.
     pub fn display(&self) -> String {
         if self.repeat > 1 {
-            format!("{} (×{})", self.text, self.repeat)
+            let s = self.last.as_secs();
+            format!(
+                "{} (×{}, last {:02}:{:02})",
+                self.text,
+                self.repeat,
+                s / 60,
+                s % 60
+            )
         } else {
             self.text.clone()
         }
@@ -47,6 +58,10 @@ pub struct LogBuffer {
     capacity: usize,
     next_seq: u64,
     evicted: u64,
+    /// Seq of the line holding each distinct error text.
+    errors: HashMap<String, u64>,
+    /// Run time stamped on new lines and repeats (`set_now`).
+    now: Duration,
 }
 
 impl LogBuffer {
@@ -56,18 +71,49 @@ impl LogBuffer {
             capacity: capacity.max(1),
             next_seq: 0,
             evicted: 0,
+            errors: HashMap::new(),
+            now: Duration::ZERO,
         }
+    }
+
+    /// Run time for the lines pushed next.
+    pub fn set_now(&mut self, now: Duration) {
+        self.now = now;
+    }
+
+    /// The line with `seq`, if not evicted.
+    fn by_seq(&mut self, seq: u64) -> Option<&mut LogLine> {
+        let first = self.lines.front()?.seq;
+        let i = usize::try_from(seq.checked_sub(first)?).ok()?;
+        self.lines.get_mut(i)
     }
 
     /// Append one complete line (newlines inside are split into several lines).
     pub fn push_line(&mut self, kind: LogKind, text: &str) {
         self.close_open();
         for line in text.trim_end_matches('\n').split('\n') {
-            // A helper error in a hot probe repeats thousands of times a second (often
-            // alternating between a few call sites); counting repeats within a short run of
-            // error lines keeps the rest of the log readable. Program output is never
-            // collapsed or skipped over: identical printf lines are usually distinct events.
-            if matches!(kind, LogKind::Error | LogKind::Raw)
+            // A helper error in a hot probe repeats thousands of times a second, usually
+            // between program output. Each distinct error is shown once and counts its
+            // repeats (D-027). Program output is never collapsed or skipped over: identical
+            // printf lines are usually distinct events.
+            if kind == LogKind::Error {
+                let now = self.now;
+                if let Some(&seq) = self.errors.get(line)
+                    && let Some(same) = self.by_seq(seq)
+                {
+                    same.repeat += 1;
+                    same.last = now;
+                    continue;
+                }
+                self.push(kind, line, false);
+                self.errors.insert(line.to_string(), self.next_seq - 1);
+                if self.errors.len() > 2 * self.capacity {
+                    let first = self.lines.front().map_or(0, |l| l.seq);
+                    self.errors.retain(|_, seq| *seq >= first);
+                }
+                continue;
+            }
+            if kind == LogKind::Raw
                 && let Some(same) = self
                     .lines
                     .iter_mut()
@@ -77,6 +123,7 @@ impl LogBuffer {
                     .find(|l| l.kind == kind && l.text == line)
             {
                 same.repeat += 1;
+                same.last = self.now;
                 continue;
             }
             self.push(kind, line, false);
@@ -121,6 +168,7 @@ impl LogBuffer {
             kind,
             text: text.to_string(),
             repeat: 1,
+            last: self.now,
             open,
         });
         self.next_seq += 1;
@@ -214,48 +262,62 @@ mod tests {
     }
 
     #[test]
-    fn identical_errors_collapse_but_output_does_not() {
+    fn each_error_is_shown_once_but_output_is_not_collapsed() {
         let mut log = LogBuffer::new(100);
+        let e3 = "get_ns_current_pid_tgid: Invalid argument (line 3)";
+        let e2 = "get_ns_current_pid_tgid: Invalid argument (line 2)";
         for _ in 0..3 {
-            log.push_line(
-                LogKind::Error,
-                "get_ns_current_pid_tgid: Invalid argument (line 3)",
-            );
+            log.push_line(LogKind::Error, e3);
         }
-        // Alternating call sites collapse too…
-        for _ in 0..3 {
-            log.push_line(
-                LogKind::Error,
-                "get_ns_current_pid_tgid: Invalid argument (line 2)",
-            );
-            log.push_line(
-                LogKind::Error,
-                "get_ns_current_pid_tgid: Invalid argument (line 3)",
-            );
+        // Alternating call sites, and errors between program output (as with `pid` in a
+        // container): still one line per distinct error.
+        for i in 0..3 {
+            log.set_now(Duration::from_secs(60 + i));
+            log.push_line(LogKind::Error, e2);
+            log.push_text(LogKind::Output, "0  wget\n");
+            log.push_line(LogKind::Error, e3);
         }
-        // …but never across program output.
-        log.push_text(LogKind::Output, "event\n");
-        log.push_line(
-            LogKind::Error,
-            "get_ns_current_pid_tgid: Invalid argument (line 3)",
-        );
-        for _ in 0..2 {
-            log.push_text(LogKind::Output, "same\n");
-            log.push_line(LogKind::System, "sys");
-        }
+        log.push_line(LogKind::System, "sys");
+        log.push_line(LogKind::System, "sys");
         let shown: Vec<String> = log.matching("").iter().map(|l| l.display()).collect();
         assert_eq!(
             shown,
             vec![
-                "get_ns_current_pid_tgid: Invalid argument (line 3) (×6)",
-                "get_ns_current_pid_tgid: Invalid argument (line 2) (×3)",
-                "event",
-                "get_ns_current_pid_tgid: Invalid argument (line 3)",
-                "same",
-                "sys",
-                "same",
-                "sys",
+                format!("{e3} (×6, last 01:02)"),
+                format!("{e2} (×3, last 01:02)"),
+                "0  wget".into(),
+                "0  wget".into(),
+                "0  wget".into(),
+                "sys".into(),
+                "sys".into(),
             ]
+        );
+    }
+
+    #[test]
+    fn an_evicted_error_starts_a_new_line() {
+        let mut log = LogBuffer::new(2);
+        log.push_line(LogKind::Error, "boom");
+        log.push_line(LogKind::Output, "a");
+        log.push_line(LogKind::Output, "b");
+        log.push_line(LogKind::Error, "boom");
+        log.push_line(LogKind::Error, "boom");
+        let shown: Vec<String> = log.matching("").iter().map(|l| l.display()).collect();
+        assert_eq!(shown, vec!["b".to_string(), "boom (×2, last 00:00)".to_string()]);
+    }
+
+    #[test]
+    fn raw_lines_collapse_only_in_a_row() {
+        let mut log = LogBuffer::new(100);
+        for _ in 0..2 {
+            log.push_line(LogKind::Raw, "odd");
+            log.push_line(LogKind::Raw, "odd");
+            log.push_text(LogKind::Output, "x\n");
+        }
+        let shown: Vec<String> = log.matching("").iter().map(|l| l.display()).collect();
+        assert_eq!(
+            shown,
+            vec!["odd (×2, last 00:00)", "x", "odd (×2, last 00:00)", "x"]
         );
     }
 

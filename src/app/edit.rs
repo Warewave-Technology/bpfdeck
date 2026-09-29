@@ -311,7 +311,12 @@ mod tests {
         );
         let run = app.target().run.as_ref().expect("run");
         assert_eq!(run.edits.as_ref().map(|d| d.summary()), Some("+1 −0".to_string()));
-        assert!(run.log.matching("").iter().any(|l| l.text.contains("✎ edited script (+1 −0 lines")));
+        assert!(
+            run.log
+                .matching("")
+                .iter()
+                .any(|l| l.text.contains("✎ edited script (+1 −0 lines"))
+        );
         press(&mut app, KeyCode::Esc);
 
         // u: original (validated from its own file), u again: the edits are back.

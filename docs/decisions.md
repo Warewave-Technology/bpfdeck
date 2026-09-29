@@ -155,3 +155,12 @@ of a new crate: no dependency to approve, and scripts are small. — accepted
 up: `✎ +a −r` in the list, the Info tab, `+`/`-` lines in the Source tab, the run
 confirmation, the run header and log, and a "changes vs the source file" section in
 exports, so a report says exactly what ran. — accepted
+
+**D-027 — One log line per distinct error; no failure text in the list.** Owner's
+request (2026-09-29) after a real run: helper errors that alternate with program output
+(e.g. `pid` in a container's pid namespace) were not collapsed by the "last 4 lines" rule
+and filled half of the log. Now every repeat of an error text, anywhere in the run, counts
+on its first line, `(×N, last mm:ss)`; the order of individual errors is in the raw NDJSON
+export. Raw lines keep the in-a-row rule (unknown output is data). In the script list,
+a failed validation shows only `✗`: the reason pushed the description off the row and is
+in the Info and Validation tabs. — accepted

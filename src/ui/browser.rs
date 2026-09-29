@@ -185,7 +185,7 @@ fn row_suffix(state: &ValidationState) -> Option<String> {
     };
     match &v.verdict {
         Verdict::Partial { found, total } => Some(format!("({found}/{total} probes)")),
-        Verdict::Failed { reason } => Some(reason.clone()),
+        // The ✗ says it; the reason is in the Info and Validation tabs.
         _ => None,
     }
 }

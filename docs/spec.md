@@ -66,10 +66,12 @@ opening the directories above the selected script. A selected directory shows a 
 ```
 ● biolatency        Block I/O latency as a histogram.
 ◐ tcpconnect        Trace TCP connect()s.            (2/3 probes)
-✗ missing_probe     …                                 kprobe:this_… not found
+✗ missing_probe     Attaches to a kernel function that does not exist.
 ! unsafe_demo       Uses system(); requires --unsafe
 … opensnoop         (validating)
 ```
+The row shows no failure text (D-027): the `✗` says it, the reason is in the Info tab's
+Status line and the Validation tab.
 
 Status glyph + color (theme roles in `src/ui/theme.rs`):
 
@@ -279,9 +281,11 @@ runs will fail and the banner explains why.
   bpfdeck exits. Exporting works during a run too.
 
 ### 6.7 Readability under real-world noise
-- Log: an error/raw line identical to one of the last 4 lines (with only error/raw lines
-  in between) increments that line's `(×N)` counter instead of adding a line. Program
-  output is never collapsed. The header's error count is still exact.
+- Log: each distinct error line appears once; its repeats, wherever they come (between
+  program output too), increment its `(×N, last mm:ss)` counter (D-027). A raw line
+  identical to one of the last 4 lines (only error/raw lines in between) is counted the
+  same way. Program output is never collapsed. The header's error count is exact, and the
+  raw NDJSON export keeps every occurrence in order.
 - Histogram panel: when the buckets don't fit, runs of 3+ empty buckets collapse into one
   `⋮ N empty buckets` row so far-out outliers stay visible. The text export keeps every
   bucket, like bpftrace.
