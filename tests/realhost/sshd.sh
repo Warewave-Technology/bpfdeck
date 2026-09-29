@@ -14,7 +14,7 @@ mkdir -p "$dir"
 docker build -q -t bpfdeck-realhost "$root/tests/realhost" > /dev/null
 docker build -q -t bpfdeck-sshd "$root/tests/realhost/sshd" > /dev/null
 docker rm -f bpfdeck-sshd > /dev/null 2>&1 || true
-docker run -d --rm --privileged --name bpfdeck-sshd -p "127.0.0.1:$port:22" \
+docker run -d --restart unless-stopped --privileged --name bpfdeck-sshd -p "127.0.0.1:$port:22" \
   -v "$dir/key.pub:/keys/key.pub:ro" bpfdeck-sshd > /dev/null
 cat > "$dir/ssh_config" << CONFIG
 Host target
