@@ -1,6 +1,7 @@
 # Fleet mode: one script on several targets — design proposal
 
-**Status: approved as proposed (D-024, 2026-09-29). F1 and F2 done.** In F2 the list
+**Status: approved as proposed (D-024, 2026-09-29). F1–F3 done.** F3 adds `X` in a host
+tab to stop the whole fleet run (the compare tab of F4 will also stop it with `x`). In F2 the list
 count follows the glyph's name (`syscount 2/3`) instead of sitting between glyph and name,
 so names stay aligned. One change in F1: a failed
 row shows its failing check inline instead of opening with `o` (letters are typed into

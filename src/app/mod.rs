@@ -26,7 +26,7 @@ pub use connect::{
 };
 pub use edit::{Draft, Editor};
 use filter::Fuzzy;
-pub use run::{Ask, Confirm, LogView};
+pub use run::{Ask, Confirm, FleetRun, LogView};
 use target::{LOCAL, Target, TargetId};
 use tree::ListRow;
 
@@ -179,6 +179,8 @@ pub struct App {
     pub help_scroll: Cell<u16>,
     /// Inline editor on the Source tab (D-025).
     pub editor: Option<Editor>,
+    /// The latest run started on several targets at once (F3).
+    pub fleet: Option<FleetRun>,
     pub tab: usize,
     /// Detail scroll offset. The renderer clamps it to the content, hence the `Cell`.
     pub scroll: Cell<u16>,
@@ -214,6 +216,7 @@ impl App {
             overlay: None,
             help_scroll: Cell::new(0),
             editor: None,
+            fleet: None,
             tab: 0,
             scroll: Cell::new(0),
             notice: None,

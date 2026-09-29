@@ -104,6 +104,12 @@ pub enum Action {
     NextChoice,
     /// Edit the selected script in the Source tab.
     EditInline,
+    /// Check/uncheck the target under the cursor (confirmation checklist).
+    ToggleTarget,
+    /// Check every target where the script validated.
+    SelectValidated,
+    /// Stop a fleet run on all its targets.
+    StopAll,
     /// Switch between the original and the edited version.
     ToggleOriginal,
     Undo,
@@ -208,6 +214,10 @@ pub const BINDINGS: &[Binding] = &[
 
     bind(Confirm, &[key(Enter)], "Enter", Action::Submit, "run it", Some("run")),
     bind(Confirm, &[ch('u')], "u", Action::ToggleUnsafe, "toggle --unsafe (if needed)", None),
+    bind(Confirm, &[key(Down)], "↓", Action::Down, "next target", None),
+    bind(Confirm, &[key(Up)], "↑", Action::Up, "previous target", None),
+    bind(Confirm, &[ch(' ')], "Space", Action::ToggleTarget, "run on this target or not", None),
+    bind(Confirm, &[ch('a')], "a", Action::SelectValidated, "all targets where it validated", None),
     bind(Confirm, &[key(Esc), ch('q')], "Esc", Action::Close, "cancel", Some("cancel")),
 
     bind(Connect, &[key(Tab), key(Down)], "Tab/↓", Action::NextField, "next field", Some("next")),
@@ -224,6 +234,7 @@ pub const BINDINGS: &[Binding] = &[
     bind(Ask, &[ch('n'), key(Esc)], "n/Esc", Action::No, "no", Some("no")),
 
     bind(Run, &[ch('x'), ctrl('c')], "x/C-c", Action::Stop, "stop (SIGINT to bpftrace)", Some("stop")),
+    bind(Run, &[ch('X')], "X", Action::StopAll, "stop on every target (fleet run)", None),
     bind(Run, &[ch('p')], "p", Action::ToggleFollow, "pause/follow the log", Some("pause")),
     bind(Run, &[ch('/')], "/", Action::OpenFilter, "filter the log", Some("filter")),
     bind(Run, &[ch('j'), key(Down)], "j/↓", Action::Down, "scroll log down", None),

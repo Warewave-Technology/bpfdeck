@@ -108,7 +108,16 @@ pub fn draw_confirm(frame: &mut Frame, area: Rect, app: &App, confirm: &Confirm)
     };
     let t = app.target();
     let mut lines = Vec::new();
-    if t.is_remote() {
+    if !confirm.targets.is_empty() {
+        lines.extend(target_checklist(confirm));
+        lines.push(field(
+            "",
+            vec![Span::styled(
+                "hosts get a temporary copy of the script",
+                Theme::muted(),
+            )],
+        ));
+    } else if t.is_remote() {
         let privilege = t.remote.as_ref().map_or("root", |r| r.privilege.as_str());
         lines.push(field(
             "Target",
@@ -178,12 +187,96 @@ pub fn draw_confirm(frame: &mut Frame, area: Rect, app: &App, confirm: &Confirm)
         lines.push(Line::raw(""));
         lines.push(Line::styled(e.clone(), Theme::error()));
     }
-    let title = if t.is_remote() {
+    let checked = confirm.targets.iter().filter(|c| c.checked).count();
+    if !confirm.targets.is_empty() {
+        lines.push(Line::raw(""));
+        let mut hint = Vec::new();
+        for (i, (key, what)) in [
+            (
+                "Enter",
+                format!("run on {checked} target{}", if checked == 1 { "" } else { "s" }),
+            ),
+            ("Space", "toggle".to_string()),
+            ("a", "all that validated".to_string()),
+            ("Esc", "cancel".to_string()),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if i > 0 {
+                hint.push(Span::styled(" · ", Theme::muted()));
+            }
+            hint.push(Span::styled(key, Theme::key_hint()));
+            hint.push(Span::raw(format!(" {what}")));
+        }
+        lines.push(Line::from(hint));
+    }
+    let title = if checked > 1 {
+        format!(" Run {} on {checked} targets ", confirm.script_id)
+    } else if t.is_remote() {
         format!(" Run {} on {} ", confirm.script_id, t.label)
     } else {
         format!(" Run {} ", confirm.script_id)
     };
     popup(frame, area, title, lines, 100);
+}
+
+/// `Targets  › [x] db-01  ● runs (dry-run)` rows of the fleet checklist (F3).
+fn target_checklist(confirm: &Confirm) -> Vec<Line<'static>> {
+    let width = confirm
+        .targets
+        .iter()
+        .map(|c| c.label.chars().count())
+        .max()
+        .unwrap_or(0);
+    confirm
+        .targets
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let here = i == confirm.cursor;
+            let (boxed, box_style) = match (&c.unavailable, c.checked) {
+                (Some(_), _) => ("[-]", Theme::muted()),
+                (None, true) => ("[x]", Theme::ok()),
+                (None, false) => ("[ ]", Theme::base()),
+            };
+            let (g, g_style) = super::browser::glyph(&c.validation);
+            let (text, text_style) = match (&c.unavailable, &c.validation) {
+                (Some(why), _) => (why.clone(), Theme::muted()),
+                (None, ValidationState::Done(v)) => match &v.verdict {
+                    Verdict::Ok => ("runs".to_string(), Theme::base()),
+                    Verdict::NeedsUnsafe => ("needs --unsafe".to_string(), Theme::warn()),
+                    Verdict::Partial { found, total } => {
+                        (format!("only {found}/{total} probes found"), Theme::warn())
+                    }
+                    Verdict::Failed { reason } => (format!("validation failed: {reason}"), Theme::error()),
+                },
+                (None, ValidationState::Pending) => ("validating…".to_string(), Theme::muted()),
+                (None, ValidationState::Skipped(r)) => (r.clone(), Theme::muted()),
+            };
+            let mut spans = vec![
+                Span::styled(
+                    if i == 0 {
+                        format!("{:<LABEL$}", "Targets")
+                    } else {
+                        " ".repeat(LABEL)
+                    },
+                    Theme::label(),
+                ),
+                Span::styled(if here { "› " } else { "  " }, Theme::key_hint()),
+                Span::styled(format!("{boxed} "), box_style),
+                Span::styled(
+                    format!("{:<width$}  ", c.label),
+                    if here { Theme::title() } else { Theme::base() },
+                ),
+            ];
+            if c.unavailable.is_none() {
+                spans.push(Span::styled(format!("{g} "), g_style));
+            }
+            spans.push(Span::styled(text, text_style));
+            Line::from(spans)
+        })
+        .collect()
 }
 
 /// The script's path; for an edited script the original path, marked as edited.

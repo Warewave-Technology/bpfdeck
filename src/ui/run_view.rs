@@ -80,6 +80,12 @@ fn header_lines(run: &Run) -> Vec<Line<'static>> {
             Theme::accent(),
         ),
         Span::styled(format!("  {}", run.state_label()), style),
+        Span::styled(
+            run.fleet
+                .map(|n| format!("  ⧉ fleet run on {n} targets"))
+                .unwrap_or_default(),
+            Theme::muted(),
+        ),
         Span::styled(format!("  {}", elapsed(run.elapsed)), Theme::base()),
     ]);
     let mut second = vec![

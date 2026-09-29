@@ -38,6 +38,37 @@ pub struct Confirm {
     /// Explicit per-run opt-in (D-009). Only togglable when `needs_unsafe`.
     pub allow_unsafe: bool,
     pub error: Option<String>,
+    /// Target checklist (F3); empty when only one target can run scripts.
+    pub targets: Vec<TargetChoice>,
+    /// Row of `targets` under the cursor.
+    pub cursor: usize,
+}
+
+/// One row of the confirmation's target checklist.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetChoice {
+    pub id: TargetId,
+    pub label: String,
+    pub checked: bool,
+    /// Why it cannot run this now (busy, no bpftrace, connection lost).
+    pub unavailable: Option<String>,
+    /// The script's validation there.
+    pub validation: ValidationState,
+}
+
+impl TargetChoice {
+    /// Validated as runnable there (● or `!`): what `a` checks.
+    fn validated(&self) -> bool {
+        matches!(&self.validation, ValidationState::Done(v) if matches!(v.verdict, Verdict::Ok | Verdict::NeedsUnsafe))
+    }
+}
+
+/// A script started on several targets at once (docs/design-fleet.md).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FleetRun {
+    pub script_id: String,
+    /// `(target, run id)` of each member.
+    pub members: Vec<(TargetId, u64)>,
 }
 
 impl Confirm {
@@ -175,11 +206,47 @@ impl App {
         Vec::new()
     }
 
+    /// The checklist rows: every target, checkable where it can run now. Empty when fewer
+    /// than two targets can (then the confirmation is the single-target one).
+    fn target_choices(&self, entry: &super::Entry) -> Vec<TargetChoice> {
+        let active = self.target().id;
+        let choices: Vec<TargetChoice> = self
+            .targets
+            .iter()
+            .map(|t| {
+                let unavailable = if t.lost() {
+                    Some("connection lost".to_string())
+                } else if let Some(run) = t.active_run() {
+                    Some(format!("busy: {} is running", run.script_id))
+                } else {
+                    match &t.bpftrace {
+                        BpftraceState::Ready { .. } => None,
+                        BpftraceState::Missing(_) => Some("no bpftrace".to_string()),
+                        BpftraceState::Detecting => Some("detecting bpftrace".to_string()),
+                    }
+                };
+                TargetChoice {
+                    id: t.id,
+                    label: t.label.clone(),
+                    checked: t.id == active && unavailable.is_none(),
+                    unavailable,
+                    validation: entry.validation(t.id).clone(),
+                }
+            })
+            .collect();
+        if choices.iter().filter(|c| c.unavailable.is_none()).count() < 2 {
+            return Vec::new();
+        }
+        choices
+    }
+
     fn open_confirm(&mut self, script_id: &str, positional: Vec<String>, named: Vec<NamedArg>) {
         let target = self.target().id;
         let Some(entry) = self.entries.iter().find(|e| e.id() == script_id) else {
             return;
         };
+        let targets = self.target_choices(entry);
+        let cursor = targets.iter().position(|c| c.checked).unwrap_or(0);
         let (meta, Some(path)) = (&entry.shown().meta, entry.run_path()) else {
             return;
         };
@@ -196,6 +263,8 @@ impl App {
             needs_unsafe: meta.needs_unsafe() || validation_says_unsafe,
             allow_unsafe: false,
             error: None,
+            targets,
+            cursor,
         }));
     }
 
@@ -260,53 +329,152 @@ impl App {
         match action {
             Action::ToggleUnsafe if confirm.needs_unsafe => confirm.allow_unsafe = !confirm.allow_unsafe,
             Action::Close => self.overlay = None,
+            Action::Down if !confirm.targets.is_empty() => {
+                confirm.cursor = (confirm.cursor + 1).min(confirm.targets.len() - 1)
+            }
+            Action::Up => confirm.cursor = confirm.cursor.saturating_sub(1),
+            Action::ToggleTarget => {
+                if let Some(c) = confirm.targets.get_mut(confirm.cursor) {
+                    if let Some(why) = &c.unavailable {
+                        confirm.error = Some(format!("{}: {why}", c.label));
+                    } else {
+                        c.checked = !c.checked;
+                        confirm.error = None;
+                    }
+                }
+            }
+            Action::SelectValidated => {
+                for c in &mut confirm.targets {
+                    c.checked = c.unavailable.is_none() && c.validated();
+                }
+                confirm.error = None;
+            }
             Action::Submit => return self.start_run(),
             _ => {}
         }
         Vec::new()
     }
 
+    /// Enter in the confirmation: start the run on the checked targets (or the active one).
     fn start_run(&mut self) -> Vec<Cmd> {
-        let Some(bpftrace) = self.bpftrace_path().map(Path::to_path_buf) else {
+        let Some(Overlay::Confirm(confirm)) = &self.overlay else {
             return Vec::new();
         };
-        let (target, remote) = (self.target().id, self.target().is_remote());
-        let Some(Overlay::Confirm(confirm)) = &mut self.overlay else {
-            return Vec::new();
+        let confirm = confirm.clone();
+        let chosen: Vec<TargetId> = if confirm.targets.is_empty() {
+            vec![self.target().id]
+        } else {
+            confirm
+                .targets
+                .iter()
+                .filter(|c| c.checked)
+                .map(|c| c.id)
+                .collect()
         };
-        let argv = match confirm.argv(&bpftrace, remote) {
-            Ok(argv) => argv,
-            Err(e) => {
-                confirm.error = Some(e.to_string());
-                return Vec::new();
+        // Build every command line first: all targets start, or none does.
+        let mut plans = Vec::new();
+        let mut problem = None;
+        for &id in &chosen {
+            let Some(t) = self.targets.iter().find(|t| t.id == id) else {
+                continue;
+            };
+            let BpftraceState::Ready { info, .. } = &t.bpftrace else {
+                problem = Some(format!("{}: bpftrace is not ready", t.label));
+                break;
+            };
+            if t.is_remote() && confirm.positional.iter().any(|v| v.contains('\n')) {
+                problem = Some(format!(
+                    "{}: values sent to a remote host cannot contain line breaks",
+                    t.label
+                ));
+                break;
             }
-        };
-        let (script_id, script, edited) = (confirm.script_id.clone(), confirm.path.clone(), confirm.edited);
-        let edits = edited
-            .then(|| self.entries.iter().find(|e| e.id() == script_id))
+            match confirm.argv(&info.path, t.is_remote()) {
+                Ok(argv) => plans.push((id, argv)),
+                Err(e) => {
+                    problem = Some(e.to_string());
+                    break;
+                }
+            }
+        }
+        if plans.is_empty() && problem.is_none() {
+            problem = Some("check at least one target (Space)".into());
+        }
+        if let Some(problem) = problem {
+            if let Some(Overlay::Confirm(c)) = &mut self.overlay {
+                c.error = Some(problem);
+            }
+            return Vec::new();
+        }
+        let edits = confirm
+            .edited
+            .then(|| self.entries.iter().find(|e| e.id() == confirm.script_id))
             .flatten()
             .and_then(|e| e.draft.as_ref().map(|d| d.diff.clone()));
-        self.next_run_id += 1;
-        let run_id = self.next_run_id;
-        let t = self.target_mut();
-        let mut run = Run::new(run_id, &script_id, &command::display(&argv));
-        if let Some(diff) = &edits {
-            run.log.push_line(
-                LogKind::System,
-                &format!("✎ edited script ({} lines vs the source file)", diff.summary()),
-            );
+        let fleet = (plans.len() > 1).then_some(plans.len());
+        let mut cmds = Vec::new();
+        let mut members = Vec::new();
+        for (target, argv) in plans {
+            self.next_run_id += 1;
+            let run_id = self.next_run_id;
+            let mut run = Run::new(run_id, &confirm.script_id, &command::display(&argv));
+            if let Some(diff) = &edits {
+                run.log.push_line(
+                    LogKind::System,
+                    &format!("✎ edited script ({} lines vs the source file)", diff.summary()),
+                );
+            }
+            run.edits = edits.clone();
+            run.fleet = fleet;
+            if let Some(t) = self.target_by_id(target) {
+                t.run = Some(run);
+                t.log_view = LogView::following();
+            }
+            members.push((target, run_id));
+            cmds.push(Cmd::StartRun {
+                target,
+                run_id,
+                argv,
+                script: confirm.path.clone(),
+            });
         }
-        run.edits = edits;
-        t.run = Some(run);
-        t.log_view = LogView::following();
+        // Stay on the selected tab if it runs the script, else show the first that does.
+        if !members.iter().any(|(t, _)| *t == self.target().id)
+            && let Some(i) = self.targets.iter().position(|t| t.id == members[0].0)
+        {
+            self.active = i;
+        }
+        if fleet.is_some() {
+            self.fleet = Some(FleetRun {
+                script_id: confirm.script_id.clone(),
+                members,
+            });
+        }
         self.overlay = None;
         self.screen = Screen::Run;
-        vec![Cmd::StartRun {
-            target,
-            run_id,
-            argv,
-            script,
-        }]
+        cmds
+    }
+
+    /// `X`: stop the selected tab's run on every target of its fleet run.
+    fn stop_fleet(&mut self) -> Vec<Cmd> {
+        let t = self.target();
+        let run_id = t.run.as_ref().map(|r| r.id);
+        let members = match (&self.fleet, run_id) {
+            (Some(f), Some(run_id)) if f.members.contains(&(t.id, run_id)) => f.members.clone(),
+            _ => return self.stop_run(self.active),
+        };
+        let mut cmds = Vec::new();
+        for (target, run_id) in members {
+            if let Some(i) = self
+                .targets
+                .iter()
+                .position(|t| t.id == target && t.run.as_ref().is_some_and(|r| r.id == run_id))
+            {
+                cmds.extend(self.stop_run(i));
+            }
+        }
+        self.notify(Level::Info, format!("stopping on {} targets", cmds.len()));
+        cmds
     }
 
     pub(super) fn ask_action(&mut self, action: Action) -> Vec<Cmd> {
@@ -403,6 +571,7 @@ impl App {
         let page = isize::try_from(self.target().log_view.page.get().max(1)).unwrap_or(10);
         match action {
             Action::Stop => return self.stop_run(self.active),
+            Action::StopAll => return self.stop_fleet(),
             Action::ToggleFollow => {
                 let view = &mut self.target_mut().log_view;
                 if view.follow {

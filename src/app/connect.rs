@@ -1031,6 +1031,151 @@ mod tests {
         assert_eq!(count(&app, "net/tcpconnect_demo.bt"), Some((1, 2)));
     }
 
+    fn confirm(app: &App) -> &crate::app::Confirm {
+        match &app.overlay {
+            Some(Overlay::Confirm(c)) => c,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn select(app: &mut App, id: &str) {
+        press(app, KeyCode::Char('/'));
+        type_text(app, id);
+        press(app, KeyCode::Enter);
+        assert_eq!(app.selected().map(|e| e.id()), Some(id));
+    }
+
+    #[test]
+    fn fleet_run_on_checked_targets() {
+        let mut app = ready();
+        connect_validated(&mut app, "db-02", &[]);
+        connect_validated(&mut app, "db-03", &["syscount_demo.bt"]);
+        select(&mut app, "syscount_demo.bt");
+        press(&mut app, KeyCode::Enter);
+        let c = confirm(&app);
+        let rows: Vec<(&str, bool)> = c.targets.iter().map(|t| (t.label.as_str(), t.checked)).collect();
+        assert_eq!(
+            rows,
+            vec![("local", false), ("db-02", false), ("db-03", true)],
+            "the active tab only"
+        );
+        // a: every target where it validated (not db-03).
+        press(&mut app, KeyCode::Char('a'));
+        let checked: Vec<&str> = confirm(&app)
+            .targets
+            .iter()
+            .filter(|t| t.checked)
+            .map(|t| t.label.as_str())
+            .collect();
+        assert_eq!(checked, vec!["local", "db-02"]);
+        // Space on db-03 (cursor starts there): checked despite the failed validation.
+        press(&mut app, KeyCode::Char(' '));
+        let cmds = press(&mut app, KeyCode::Enter);
+        let started: Vec<(TargetId, u64, String)> = cmds
+            .iter()
+            .map(|c| match c {
+                Cmd::StartRun {
+                    target, run_id, argv, ..
+                } => (
+                    *target,
+                    *run_id,
+                    argv.last().expect("argv").to_string_lossy().into_owned(),
+                ),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            started,
+            vec![
+                (LOCAL, 1, "/srv/bpf/syscount_demo.bt".into()),
+                (1, 2, "script.bt".into()),
+                (2, 3, "script.bt".into()),
+            ]
+        );
+        assert_eq!(
+            app.fleet.as_ref().map(|f| f.members.clone()),
+            Some(vec![(LOCAL, 1), (1, 2), (2, 3)])
+        );
+        assert!(
+            app.targets
+                .iter()
+                .all(|t| t.run.as_ref().is_some_and(|r| r.fleet == Some(3)))
+        );
+        assert_eq!((app.screen, app.target().label.as_str()), (Screen::Run, "db-03"));
+
+        // x stops this host only, X all of them.
+        let cmds = press(&mut app, KeyCode::Char('x'));
+        assert_eq!(cmds, vec![Cmd::StopRun { target: 2, run_id: 3 }]);
+        let cmds = press(&mut app, KeyCode::Char('X'));
+        assert_eq!(
+            cmds,
+            vec![
+                Cmd::StopRun {
+                    target: LOCAL,
+                    run_id: 1
+                },
+                Cmd::StopRun { target: 1, run_id: 2 }
+            ],
+            "db-03 is stopping already"
+        );
+    }
+
+    #[test]
+    fn busy_lost_and_single_targets() {
+        let mut app = ready();
+        connect_validated(&mut app, "db-02", &[]);
+        connect_validated(&mut app, "db-03", &[]);
+        // db-02 is busy with another script, db-03 lost: only local and... nothing else.
+        app.targets[1].run = Some(crate::model::run_state::Run::new(9, "other.bt", "bpftrace"));
+        app.update(Msg::ConnectionLost {
+            target: 2,
+            reason: "gone".into(),
+        });
+        press(&mut app, KeyCode::Char('<'));
+        press(&mut app, KeyCode::Char('<'));
+        assert_eq!(app.target().label, "local");
+        select(&mut app, "syscount_demo.bt");
+        press(&mut app, KeyCode::Enter);
+        assert!(
+            confirm(&app).targets.is_empty(),
+            "one target can run: no checklist"
+        );
+        press(&mut app, KeyCode::Esc);
+
+        // With two free targets the busy and lost ones are listed but cannot be checked.
+        connect_validated(&mut app, "db-04", &[]);
+        press(&mut app, KeyCode::Enter);
+        let c = confirm(&app);
+        let why: Vec<Option<&str>> = c.targets.iter().map(|t| t.unavailable.as_deref()).collect();
+        assert_eq!(
+            why,
+            vec![
+                None,
+                Some("busy: other.bt is running"),
+                Some("connection lost"),
+                None
+            ]
+        );
+        press(&mut app, KeyCode::Up);
+        press(&mut app, KeyCode::Char(' '));
+        assert!(
+            confirm(&app)
+                .error
+                .as_deref()
+                .is_some_and(|e| e == "db-03: connection lost")
+        );
+        // Unchecking the only checked target: nothing to run.
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Char(' '));
+        assert!(press(&mut app, KeyCode::Enter).is_empty());
+        assert!(
+            confirm(&app)
+                .error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("check at least one target"))
+        );
+    }
+
     #[test]
     fn disconnecting() {
         let mut app = ready();

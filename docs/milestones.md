@@ -84,7 +84,7 @@ consumer (delivered + dropped = sent, snapshots coalesced, exit last).
 ## M8 — Fleet mode (docs/design-fleet.md, D-024)
 - [x] F1 Host list in the connect dialog (parse + expand), parallel checks, per-host rows
 - [x] F2 Validation matrix in the Validation tab, disagreement count in the list
-- [ ] F3 Target checklist in the confirmation, `FleetRun`, start/stop/quit on the group
+- [x] F3 Target checklist in the confirmation, `FleetRun`, start/stop/quit on the group
 - [ ] F4 `model/compare.rs` + compare tab: hist percentiles/merge, key × host tables, outliers
 - [ ] F5 Fleet export, spec/README/D-entries, end-to-end with 3 sshd containers
 

@@ -1,6 +1,6 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 304
+assertion_line: 310
 expression: "render(&app, 80, 24)"
 ---
 "╭ Scripts (3/8) ───────────╮╭ 1 Info │ 2 Source │ 3 Validation ────────────────╮"
@@ -10,16 +10,16 @@ expression: "render(&app, 80, 24)"
 "│                          ││Status   … validating…                            │"
 "│                          ││File     /srv/bpf/syscount_demo.bt  (310 bytes)   │"
 "│                          ││Usage    USAGE: syscount_demo.bt                  │"
-"│                          ││Probes   · tracepoint:raw_syscalls:sys_enter      │"
 "│ ╭ Run syscount_demo.bt on ops@10.0.3.14 ───────────────────────────────────╮ │"
-"│ │Target    ops@10.0.3.14 as root via sudo                                  │ │"
-"│ │          the script is copied there for this run and removed afterwards  │ │"
+"│ │Targets     [ ] local          ● runs                                     │ │"
+"│ │          › [x] ops@10.0.3.14  … validating…                              │ │"
+"│ │          hosts get a temporary copy of the script                        │ │"
 "│ │Path      /srv/bpf/syscount_demo.bt                                       │ │"
 "│ │Command   /usr/bin/bpftrace -f json -B line -- script.bt                  │ │"
 "│ │Probes    tracepoint:raw_syscalls:sys_enter, interval:s:1                 │ │"
+"│ │                                                                          │ │"
+"│ │Enter run on 1 target · Space toggle · a all that validated · Esc cancel  │ │"
 "│ ╰──────────────────────────────────────────────────────────────────────────╯ │"
-"│                          ││                                                  │"
-"│                          ││                                                  │"
 "│                          ││                                                  │"
 "│/sysc                     ││                                                  │"
 "╰──────────────────────────╯╰──────────────────────────────────────────────────╯"

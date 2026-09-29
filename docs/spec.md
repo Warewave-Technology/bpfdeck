@@ -112,6 +112,15 @@ Always shown before execution. Contents:
 - Also lists why the run may fail here: no privileges, kernel lockdown, failed or partial
   validation. These are warnings; the run is still allowed.
 
+Fleet runs (F3, docs/design-fleet.md): when two or more targets can run scripts, the
+confirmation lists every target with a checkbox (`[-]` and the reason for one that is
+busy, lost or has no bpftrace) and its validation of the script. The selected tab is
+checked; `↑`/`↓` move, `Space` toggles, `a` checks all where the script validated (`●`
+or `!`). `Enter` starts the same command line on every checked target (all or none: a
+problem with one blocks the start); the runs are grouped as a fleet run and each shows
+`⧉ fleet run on N targets` in its header. `x` stops the selected tab's run, `X` all runs
+of its fleet run.
+
 ### 5.3 Parameters form (modal, only if the script uses parameters)
 - Positional: every `$1..$N` used in the script → one text field each. `$#` usage noted.
 - Named: every `getopt("name")` / `getopt("name", default)` → field prefilled with the default;
@@ -381,6 +390,8 @@ the login (root), `sudo -n`, or `sudo -S` with the password from the connect dia
 | `u` | list | switch between the original and the edited version |
 | `r` | list | rescan + revalidate |
 | `x`, `Ctrl-C` | run view | stop run (SIGINT to bpftrace) |
+| `X` | run view | stop a fleet run on all its targets |
+| `↑/↓`, `Space`, `a` | run confirmation | target checklist: move, toggle, all that validated |
 | `j/k`, `PgUp/PgDn`, `g/G` | run view | scroll the log (up pauses, `G` follows) |
 | `o` | list | show the last run |
 | `c`, `+` | list, run view | connect to a host (new results tab) |

@@ -69,6 +69,8 @@ pub struct Run {
     pub panels: Panels,
     /// The run is of an inline-edited script: its changes vs the source file (D-025).
     pub edits: Option<Diff>,
+    /// Part of a fleet run on this many targets (F3).
+    pub fleet: Option<usize>,
 }
 
 impl Run {
@@ -90,6 +92,7 @@ impl Run {
             log,
             panels: Panels::default(),
             edits: None,
+            fleet: None,
         }
     }
 
