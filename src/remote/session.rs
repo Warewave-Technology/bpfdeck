@@ -82,6 +82,10 @@ pub enum SessionError {
     Handshake { stage: &'static str, detail: String },
     #[error("argument contains a line break, which cannot be sent to a remote host")]
     Newline,
+    #[error("no answer in time")]
+    Timeout,
+    #[error("reading the session: {0}")]
+    Io(String),
 }
 
 /// A connected target: every session multiplexes over its SSH master (ControlPath).
@@ -293,18 +297,32 @@ impl SshTarget {
         script: Option<&[u8]>,
         timeout: Duration,
     ) -> Result<Captured, CaptureError> {
+        self.run_to_end(argv, script, timeout).await.map_err(|e| match e {
+            SessionError::Timeout => CaptureError::Timeout,
+            other => CaptureError::Remote(other.to_string()),
+        })
+    }
+
+    /// [`capture`](Self::capture) keeping the session's own error (sudo needs a password…).
+    pub async fn run_to_end(
+        &self,
+        argv: &[OsString],
+        script: Option<&[u8]>,
+        timeout: Duration,
+    ) -> Result<Captured, SessionError> {
         let work = async {
-            let mut opened = self
-                .open(argv, script)
-                .await
-                .map_err(|e| CaptureError::Remote(e.to_string()))?;
+            let mut opened = self.open(argv, script).await?;
             let (mut out, mut err) = (Vec::new(), Vec::new());
             let (r1, r2) = tokio::join!(
                 opened.stdout.read_to_end(&mut out),
                 opened.stderr.read_to_end(&mut err)
             );
-            r1.and(r2).map_err(CaptureError::Io)?;
-            let status = opened.child.wait().await.map_err(CaptureError::Io)?;
+            r1.and(r2).map_err(|e| SessionError::Io(e.to_string()))?;
+            let status = opened
+                .child
+                .wait()
+                .await
+                .map_err(|e| SessionError::Io(e.to_string()))?;
             drop(opened.stdin);
             Ok(Captured {
                 success: status.success(),
@@ -315,7 +333,7 @@ impl SshTarget {
         };
         tokio::time::timeout(timeout, work)
             .await
-            .unwrap_or(Err(CaptureError::Timeout))
+            .unwrap_or(Err(SessionError::Timeout))
     }
 
     /// Start a run on the host; events flow exactly as for a local run. `ssh` is spawned

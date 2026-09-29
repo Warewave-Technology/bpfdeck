@@ -435,7 +435,9 @@ impl Executor {
         let base = SshTarget {
             dest: dest.clone(),
             ssh: self.ssh.clone(),
-            control_path: dir.join("%C"),
+            // One socket per target: two tabs never share (and close) one master, and a
+            // retry never meets a leftover socket.
+            control_path: dir.join(format!("{target}-%C")),
             sudo: Sudo::None,
         };
         let log = connect::master_log(&dir, attempt);
@@ -451,7 +453,7 @@ impl Executor {
         }
         self.connecting.retain(|_, (task, _)| !task.is_finished());
         let (remotes, validators) = (self.remotes.clone(), self.validators.clone());
-        let task_base = base.clone();
+        let (task_base, close_base) = (base.clone(), base.clone());
         let task = tokio::spawn(async move {
             // Checks go out in order, before the final message.
             let (report, mut checks) = mpsc::channel(16);
@@ -494,11 +496,17 @@ impl Executor {
                         bpftrace: (c.bpftrace, strategy),
                     }
                 }
-                Err(Failure::NeedsAuth(message)) => Msg::ConnectNeedsAuth { attempt, message },
-                Err(Failure::Failed) => Msg::ConnectFailed {
-                    attempt,
-                    reason: None,
-                },
+                Err(failure) => {
+                    // The master may be up although a later check failed.
+                    connect::close_master(&close_base).await;
+                    match failure {
+                        Failure::NeedsAuth(message) => Msg::ConnectNeedsAuth { attempt, message },
+                        Failure::Failed => Msg::ConnectFailed {
+                            attempt,
+                            reason: None,
+                        },
+                    }
+                }
             };
             let _ = tx.send(msg).await;
         });

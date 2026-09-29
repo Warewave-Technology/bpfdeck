@@ -190,18 +190,8 @@ async fn control(target: &SshTarget, op: &str) -> bool {
 async fn facts(target: &SshTarget) -> Result<Facts, SessionError> {
     let argv: Vec<OsString> = vec!["sh".into(), super::REMOTE_SCRIPT.into()];
     let out = target
-        .capture(&argv, Some(FACTS_SCRIPT.as_bytes()), FACTS_TIMEOUT)
-        .await
-        .map_err(|e| match e {
-            crate::bpftrace::CaptureError::Remote(detail) => SessionError::Handshake {
-                stage: "session",
-                detail,
-            },
-            other => SessionError::Handshake {
-                stage: "session",
-                detail: format!("{other:?}"),
-            },
-        })?;
+        .run_to_end(&argv, Some(FACTS_SCRIPT.as_bytes()), FACTS_TIMEOUT)
+        .await?;
     if !out.success {
         return Err(SessionError::Handshake {
             stage: "host facts",
@@ -482,7 +472,7 @@ mod tests {
         let a = attempt("pwsudo", SudoChoice::Auto, None, false).await;
         assert!(a.result.is_err());
         assert!(
-            texts(&a.checks).contains("sudo needs a password"),
+            texts(&a.checks).contains("Fail root: sudo needs a password here: pick 'sudo with password'"),
             "{}",
             texts(&a.checks)
         );

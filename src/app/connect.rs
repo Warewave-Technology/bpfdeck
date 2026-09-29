@@ -628,7 +628,9 @@ mod tests {
                 .is_some_and(|n| n.text.contains("press c to reconnect"))
         );
 
-        // c starts with that host; connecting again replaces the tab in place.
+        // c (from the results pane too) starts with that host; connecting again replaces
+        // the tab in place.
+        app.screen = Screen::Run;
         press(&mut app, KeyCode::Char('c'));
         assert_eq!(form(&app).host, "ops@db-02");
         let attempt = match press(&mut app, KeyCode::Enter).as_slice() {

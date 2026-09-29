@@ -453,6 +453,8 @@ impl App {
             }
             Action::PrevTarget => self.switch_target(-1),
             Action::NextTarget => self.switch_target(1),
+            Action::Connect => self.open_connect(),
+            Action::Disconnect => return self.request_disconnect(),
             Action::Close => self.screen = Screen::Browser,
             Action::Help => self.overlay = Some(Overlay::Help),
             _ => {}
