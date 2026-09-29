@@ -1,0 +1,28 @@
+---
+source: src/model/export.rs
+assertion_line: 333
+expression: "render_fleet_text(\"tools/biolatency.bt\", &compare(&members, None, usize::MAX))"
+---
+bpfdeck fleet run comparison
+script:   tools/biolatency.bt
+hosts:    3
+outliers: ◀ marks a value above 3× the median of the other hosts (hists: p50 or p99)
+
+host   state                     elapsed  errors dropped
+db-01  running                  00:00:42       0       0
+db-02  running                  00:00:42       0       0
+db-03  running                  00:00:42       0       0
+
+@usecs: hist
+  db-01  count 91         p50 [32, 64)       p90 [32, 64)       p99 [8K, 16K)      max [8K, 16K)
+  db-02  count 990        p50 [8K, 16K)      p90 [8K, 16K)      p99 [8K, 16K)      max [8K, 16K) ◀
+  db-03  count 92         p50 [32, 64)       p90 [32, 64)       p99 [8K, 16K)      max [8K, 16K)
+  merged over the hosts:
+  [16, 32)             120 |@@@@@@                                              |
+  [32, 64)             150 |@@@@@@@@                                            |
+  [8K, 16K)            903 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+
+@calls: map, by total
+  key              total           db-01           db-02           db-03
+  postgres         10512            1207          8205 ◀            1100
+  sshd                 9               3               3               3

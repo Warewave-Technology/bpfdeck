@@ -7,8 +7,9 @@ use super::target::Target;
 use super::{App, Level, Screen};
 use crate::keymap::Action;
 use crate::model::compare::{self, Comparison, Member, SortColumn};
+use crate::model::export;
 use crate::model::run_state::Run;
-use crate::msg::Cmd;
+use crate::msg::{Cmd, FleetExport};
 
 /// Rows per key × host table.
 pub const TOP_KEYS: usize = 10;
@@ -83,6 +84,7 @@ impl App {
                     self.compare = false;
                 }
             }
+            Action::Export => return self.export_fleet(),
             Action::PrevTarget => self.switch_target(-1),
             Action::NextTarget => self.switch_target(1),
             Action::ToggleFullWidth => self.full_width = !self.full_width,
@@ -91,6 +93,35 @@ impl App {
             _ => {}
         }
         Vec::new()
+    }
+
+    /// `w`: every host's run plus the comparison report.
+    fn export_fleet(&mut self) -> Vec<Cmd> {
+        let Some(fleet) = &self.fleet else {
+            return Vec::new();
+        };
+        let script_id = fleet.script_id.clone();
+        let runs: Vec<FleetExport> = self
+            .fleet_members()
+            .into_iter()
+            .map(|(t, run)| FleetExport {
+                run_id: run.id,
+                host: t.label.clone(),
+                text: export::render_text(run, Some(&t.label), None),
+            })
+            .collect();
+        let members: Vec<Member> = self
+            .fleet_members()
+            .into_iter()
+            .map(|(t, run)| Member { label: &t.label, run })
+            .collect();
+        let report = export::render_fleet_text(&script_id, &compare::compare(&members, None, usize::MAX));
+        self.notify(Level::Info, "exporting…".into());
+        vec![Cmd::ExportFleet {
+            script_id,
+            report,
+            runs,
+        }]
     }
 
     /// Stop every member of the fleet run that is still running.

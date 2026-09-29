@@ -103,6 +103,14 @@ pub enum Msg {
     },
 }
 
+/// One host's part of `Cmd::ExportFleet`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FleetExport {
+    pub run_id: u64,
+    pub host: String,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cmd {
     /// Resolve the source (clone/update git) and scan it.
@@ -135,6 +143,13 @@ pub enum Cmd {
         script_id: String,
         host: Option<String>,
         text: String,
+    },
+    /// `w` on the compare tab: each member's run as `ExportRun` would write it (host in
+    /// the name), plus `report` as `bpfdeck-fleet-<script>-<UTC>.txt`; one `Exported`.
+    ExportFleet {
+        script_id: String,
+        report: String,
+        runs: Vec<FleetExport>,
     },
     /// Open the SSH master for `target` and run the connect checks. `interactive`: open
     /// the master in the plain terminal first (TUI suspended), so SSH can ask questions.

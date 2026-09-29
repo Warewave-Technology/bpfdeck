@@ -274,6 +274,7 @@ pub const BINDINGS: &[Binding] = &[
     bind(Compare, &[ch('<')], "<", Action::PrevTarget, "previous tab", None),
     bind(Compare, &[ch('>')], ">", Action::NextTarget, "next tab", None),
     bind(Compare, &[ch('z')], "z", Action::ToggleFullWidth, "maximize results", None),
+    bind(Compare, &[ch('w')], "w", Action::Export, "write every host's run + a comparison report", None),
     bind(Compare, &[key(Esc)], "Esc", Action::Close, "back to list", Some("back")),
     bind(Compare, &[ch('?')], "?", Action::Help, "help", Some("help")),
 

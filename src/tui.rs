@@ -24,7 +24,7 @@ use crate::bpftrace::coalesce::Coalescer;
 use crate::bpftrace::runner::{self, Escalation, RunEvent, RunHandle};
 use crate::bpftrace::validate::{self, Strategy, Validator};
 use crate::model::log;
-use crate::msg::{Cmd, Msg};
+use crate::msg::{Cmd, FleetExport, Msg};
 use crate::remote::Dest;
 use crate::remote::connect::{self, Failure, SudoChoice};
 use crate::remote::session::{Backend, SshTarget, Sudo};
@@ -232,6 +232,29 @@ fn export_files(
     Ok(written)
 }
 
+/// Each host's files as `export_files` writes them, then the fleet report.
+fn export_fleet(
+    dir: &Path,
+    script_id: &str,
+    secs: u64,
+    report: String,
+    parts: Vec<(FleetExport, Option<PathBuf>, bool)>,
+) -> Result<Vec<PathBuf>> {
+    let mut written = Vec::new();
+    for (part, spool, truncated) in parts {
+        let stem = crate::model::export::file_stem(Some(&part.host), script_id, secs);
+        written.extend(export_files(dir, &stem, part.text, spool.as_deref(), truncated)?);
+    }
+    let dir = std::fs::canonicalize(dir).with_context(|| format!("export dir {}", dir.display()))?;
+    let path = dir.join(format!(
+        "{}.txt",
+        crate::model::export::file_stem(Some("fleet"), script_id, secs)
+    ));
+    std::fs::write(&path, report).with_context(|| format!("writing {}", path.display()))?;
+    written.push(path);
+    Ok(written)
+}
+
 impl Executor {
     fn execute(&mut self, cmd: Cmd, terminal: &mut DefaultTerminal) -> Result<()> {
         match cmd {
@@ -359,6 +382,30 @@ impl Executor {
                     let stem = crate::model::export::file_stem(host.as_deref(), &script_id, secs);
                     let result = export_files(&dir, &stem, text, spool.as_deref(), truncated)
                         .map_err(|e| format!("{e:#}"));
+                    let _ = tx.blocking_send(Msg::Exported(result));
+                });
+            }
+            Cmd::ExportFleet {
+                script_id,
+                report,
+                runs,
+            } => {
+                let parts: Vec<(FleetExport, Option<PathBuf>, bool)> = runs
+                    .into_iter()
+                    .map(|r| {
+                        let active = self.runs.values().find(|a| a.id == r.run_id);
+                        let spool = active.and_then(|a| a.spool.clone());
+                        let truncated = active.is_some_and(|a| a.handle.spool_truncated());
+                        (r, spool, truncated)
+                    })
+                    .collect();
+                let (tx, dir) = (self.tx.clone(), self.export_dir.clone());
+                tokio::task::spawn_blocking(move || {
+                    let secs = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_secs());
+                    let result =
+                        export_fleet(&dir, &script_id, secs, report, parts).map_err(|e| format!("{e:#}"));
                     let _ = tx.blocking_send(Msg::Exported(result));
                 });
             }
@@ -818,6 +865,46 @@ mod tests {
 
     /// A printf/map flood against a deliberately slow consumer: nothing is lost silently,
     /// snapshots collapse, and the exit (after the last snapshot) always arrives.
+    #[test]
+    fn fleet_export_writes_every_host_and_the_report() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let spool = dir.path().join("spool.ndjson");
+        std::fs::write(&spool, "{}\n").expect("spool");
+        let part = |host: &str| FleetExport {
+            run_id: 1,
+            host: host.into(),
+            text: format!("report of {host}\n"),
+        };
+        let paths = export_fleet(
+            dir.path(),
+            "tools/biolatency.bt",
+            0,
+            "comparison\n".into(),
+            vec![
+                (part("ops@db-01"), Some(spool), false),
+                (part("db-02"), None, false),
+            ],
+        )
+        .expect("export");
+        let names: Vec<String> = paths
+            .iter()
+            .map(|p| p.file_name().expect("name").to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "bpfdeck-ops_db-01-biolatency-19700101-000000.txt",
+                "bpfdeck-ops_db-01-biolatency-19700101-000000.ndjson",
+                "bpfdeck-db-02-biolatency-19700101-000000.txt",
+                "bpfdeck-fleet-biolatency-19700101-000000.txt",
+            ]
+        );
+        assert_eq!(
+            std::fs::read_to_string(&paths[3]).expect("report"),
+            "comparison\n"
+        );
+    }
+
     #[test]
     fn export_writes_text_and_raw_copy() {
         let dir = tempfile::tempdir().expect("tempdir");

@@ -432,6 +432,25 @@ impl App {
             }
             Msg::Exported(result) => {
                 match result {
+                    Ok(paths) if paths.len() > 2 => {
+                        let dir = paths[0]
+                            .parent()
+                            .map(|d| d.display().to_string())
+                            .unwrap_or_default();
+                        let report = paths
+                            .iter()
+                            .find(|p| {
+                                p.file_name()
+                                    .is_some_and(|n| n.to_string_lossy().starts_with("bpfdeck-fleet-"))
+                            })
+                            .and_then(|p| p.file_name())
+                            .map(|n| format!("; report: {}", n.to_string_lossy()))
+                            .unwrap_or_default();
+                        self.notify(
+                            Level::Info,
+                            format!("exported {} files to {dir}{report}", paths.len()),
+                        );
+                    }
                     Ok(paths) => {
                         let names: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
                         self.notify(Level::Info, format!("exported: {}", names.join(", ")));
