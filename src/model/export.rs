@@ -111,21 +111,25 @@ fn render_panel(out: &mut String, panel: &Panel) {
     }
 }
 
-/// `bpfdeck-<script stem>-<UTC yyyymmdd-hhmmss>`, safe as a file name.
-pub fn file_stem(script_id: &str, unix_secs: u64) -> String {
+/// `bpfdeck-[<host>-]<script stem>-<UTC yyyymmdd-hhmmss>`, safe as a file name.
+pub fn file_stem(host: Option<&str>, script_id: &str, unix_secs: u64) -> String {
+    let safe = |s: &str| -> String {
+        s.chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || "-_.".contains(c) {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect()
+    };
     let name = script_id.rsplit('/').next().unwrap_or(script_id);
-    let name = name.strip_suffix(".bt").unwrap_or(name);
-    let name: String = name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    format!("bpfdeck-{name}-{}", utc_stamp(unix_secs))
+    let name = safe(name.strip_suffix(".bt").unwrap_or(name));
+    match host {
+        Some(host) => format!("bpfdeck-{}-{name}-{}", safe(host), utc_stamp(unix_secs)),
+        None => format!("bpfdeck-{name}-{}", utc_stamp(unix_secs)),
+    }
 }
 
 /// `yyyymmdd-hhmmss` in UTC, without a date crate (days → civil date, H. Hinnant).
@@ -163,12 +167,16 @@ mod tests {
         assert_eq!(utc_stamp(951_782_400), "20000229-000000", "leap day");
         assert_eq!(utc_stamp(1_790_700_000), "20260929-164000");
         assert_eq!(
-            file_stem("net/tcp connect.bt", 0),
+            file_stem(None, "net/tcp connect.bt", 0),
             "bpfdeck-tcp_connect-19700101-000000"
         );
         assert_eq!(
-            file_stem("shebang_no_ext", 0),
+            file_stem(None, "shebang_no_ext", 0),
             "bpfdeck-shebang_no_ext-19700101-000000"
+        );
+        assert_eq!(
+            file_stem(Some("ops@10.0.3.14:2222"), "tools/biolatency.bt", 0),
+            "bpfdeck-ops_10.0.3.14_2222-biolatency-19700101-000000"
         );
     }
 

@@ -1,6 +1,6 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 436
+assertion_line: 442
 expression: "render(&app, 80, 24)"
 ---
 "╭ Scripts (8) ─────────────╮╭ 1 Info │ 2 Source │ 3 Validation ────────── net/ ╮"
@@ -22,8 +22,8 @@ expression: "render(&app, 80, 24)"
 "│                          ││                                                  │"
 "│                          ││                                                  │"
 "│                          ││                                                  │"
-"│                          ││                                                  │"
-"│                          ││                                                  │"
-"│                          ││                                                  │"
 "╰──────────────────────────╯╰──────────────────────────────────────────────────╯"
+"╭ [local] │ + ────────────────────────────────────────── root · 6.1.0-18-amd64 ╮"
+"│No run on local yet: select a script and press Enter. c connects to a host.   │"
+"╰──────────────────────────────────────────────────────────────────────────────╯"
 " Enter run / filter ? help q quit      bpftrace v0.21.2 · 6.1.0-18-amd64 · root "

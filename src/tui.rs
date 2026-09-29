@@ -1,11 +1,12 @@
 //! The TUI runtime: terminal setup, input thread, signal handling, the Msg/Cmd loop and
 //! the executor that performs `Cmd`s (docs/architecture.md, "Concurrency model").
 
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -17,6 +18,7 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc;
 
 use crate::app::App;
+use crate::app::target::TargetId;
 use crate::bpftrace::coalesce::Coalescer;
 use crate::bpftrace::runner::{self, Escalation, RunEvent, RunHandle};
 use crate::bpftrace::validate::{self, Strategy, Validator};
@@ -50,9 +52,9 @@ pub async fn run(input: String, bpftrace_path: PathBuf, export_dir: PathBuf) -> 
     let mut exec = Executor {
         tx,
         bpftrace: bpftrace_path,
-        validator: Arc::new(OnceLock::new()),
+        validators: Arc::new(Mutex::new(HashMap::new())),
         input_gate,
-        run: None,
+        runs: HashMap::new(),
         export_dir,
     };
     let result = event_loop(&mut terminal, &mut app, &mut exec, &mut input_rx, &mut rx).await;
@@ -146,11 +148,12 @@ fn spawn_input_thread(tx: mpsc::Sender<Msg>, gate: Arc<Mutex<()>>, stop: Arc<Ato
 struct Executor {
     tx: mpsc::Sender<Msg>,
     bpftrace: PathBuf,
-    /// Set once bpftrace is detected; `Cmd::Validate` only arrives after that.
-    validator: Arc<OnceLock<Arc<Validator>>>,
+    /// Per target, set once bpftrace is detected there; `Cmd::Validate` only comes after.
+    validators: Arc<Mutex<HashMap<TargetId, Arc<Validator>>>>,
     input_gate: Arc<Mutex<()>>,
-    /// The current run (D-010). Replacing or dropping it kills a live process group.
-    run: Option<ActiveRun>,
+    /// The current run per target (D-010). Replacing or dropping one kills its process
+    /// group (for remote targets: the local `ssh`, which makes the runner stop bpftrace).
+    runs: HashMap<TargetId, ActiveRun>,
     /// Where `w` writes exports (`--export-dir`).
     export_dir: PathBuf,
 }
@@ -228,8 +231,8 @@ impl Executor {
                     let _ = tx.blocking_send(Msg::Loaded(result));
                 });
             }
-            Cmd::DetectEnv => {
-                let (tx, path, slot) = (self.tx.clone(), self.bpftrace.clone(), self.validator.clone());
+            Cmd::DetectEnv { target } => {
+                let (tx, path, slot) = (self.tx.clone(), self.bpftrace.clone(), self.validators.clone());
                 tokio::spawn(async move {
                     let host = sys::detect();
                     let bpftrace = match bpftrace::detect(&path).await {
@@ -242,16 +245,22 @@ impl Executor {
                                 validate::DEFAULT_WORKERS,
                                 validate::DEFAULT_TIMEOUT,
                             );
-                            let _ = slot.set(Arc::new(validator));
+                            lock(&slot).insert(target, Arc::new(validator));
                             Ok((info, strategy))
                         }
                         Err(e) => Err(e.to_string()),
                     };
-                    let _ = tx.send(Msg::EnvDetected { host, bpftrace }).await;
+                    let _ = tx
+                        .send(Msg::EnvDetected {
+                            target,
+                            host,
+                            bpftrace,
+                        })
+                        .await;
                 });
             }
-            Cmd::Validate { id, request } => {
-                let Some(validator) = self.validator.get().cloned() else {
+            Cmd::Validate { target, id, request } => {
+                let Some(validator) = lock(&self.validators).get(&target).cloned() else {
                     return Ok(());
                 };
                 let tx = self.tx.clone();
@@ -259,6 +268,7 @@ impl Executor {
                     let validation = validator.validate(&request).await;
                     let _ = tx
                         .send(Msg::Validated {
+                            target,
                             id,
                             content_hash: request.content_hash,
                             validation,
@@ -266,18 +276,24 @@ impl Executor {
                         .await;
                 });
             }
-            Cmd::StartRun { run_id, argv } => self.start_run(run_id, &argv),
-            Cmd::StopRun { run_id } => {
-                if let Some(run) = self.run.as_mut().filter(|r| r.id == run_id) {
+            Cmd::StartRun {
+                target,
+                run_id,
+                argv,
+                script: _,
+            } => self.start_run(target, run_id, &argv),
+            Cmd::StopRun { target, run_id } => {
+                if let Some(run) = self.runs.get_mut(&target).filter(|r| r.id == run_id) {
                     run.handle.stop();
                 }
             }
             Cmd::ExportRun {
                 run_id,
                 script_id,
+                host,
                 text,
             } => {
-                let active = self.run.as_ref().filter(|r| r.id == run_id);
+                let active = self.runs.values().find(|r| r.id == run_id);
                 let spool = active.and_then(|r| r.spool.clone());
                 let truncated = active.is_some_and(|r| r.handle.spool_truncated());
                 let (tx, dir) = (self.tx.clone(), self.export_dir.clone());
@@ -285,7 +301,7 @@ impl Executor {
                     let secs = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map_or(0, |d| d.as_secs());
-                    let stem = crate::model::export::file_stem(&script_id, secs);
+                    let stem = crate::model::export::file_stem(host.as_deref(), &script_id, secs);
                     let result = export_files(&dir, &stem, text, spool.as_deref(), truncated)
                         .map_err(|e| format!("{e:#}"));
                     let _ = tx.blocking_send(Msg::Exported(result));
@@ -307,10 +323,10 @@ impl Executor {
 
     /// Spawn bpftrace and forward its events (plus a tick for the elapsed time) as `Msg`s
     /// until it exits.
-    fn start_run(&mut self, run_id: u64, argv: &[std::ffi::OsString]) {
+    fn start_run(&mut self, target: TargetId, run_id: u64, argv: &[std::ffi::OsString]) {
         let tx = self.tx.clone();
-        // The previous run is over (the app allows one at a time): drop it and its spool.
-        self.run = None;
+        // The target's previous run is over (one at a time per target): drop it and its spool.
+        self.runs.remove(&target);
         let (events_tx, events) = mpsc::channel(runner::CHANNEL_CAPACITY);
         let spool_file = spool_path(run_id);
         let spool = spool_file.clone().map(|path| runner::Spool {
@@ -331,11 +347,14 @@ impl Executor {
                 return;
             }
         };
-        self.run = Some(ActiveRun {
-            id: run_id,
-            handle,
-            spool: spool_file,
-        });
+        self.runs.insert(
+            target,
+            ActiveRun {
+                id: run_id,
+                handle,
+                spool: spool_file,
+            },
+        );
         tokio::spawn(forward_run(run_id, events, tx, TICK));
     }
 
@@ -442,6 +461,11 @@ fn temp_copy(path: &Path) -> Result<PathBuf> {
     let target = std::env::temp_dir().join(format!("bpfdeck-{}-{name}", std::process::id()));
     std::fs::copy(path, &target).with_context(|| format!("copying {} for editing", path.display()))?;
     Ok(target)
+}
+
+/// A poisoned lock only means another task panicked mid-insert; the map is still usable.
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 #[cfg(test)]

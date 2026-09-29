@@ -116,7 +116,7 @@ fn kind_style(kind: LogKind) -> Style {
 }
 
 fn draw_log(frame: &mut Frame, area: Rect, app: &App, run: &Run) {
-    let view = &app.log_view;
+    let view = &app.target().log_view;
     let focused = app.overlay.is_none();
     let mode = if view.follow {
         " Log · following "

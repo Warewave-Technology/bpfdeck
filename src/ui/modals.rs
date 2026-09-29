@@ -98,7 +98,7 @@ pub fn draw_form(frame: &mut Frame, area: Rect, script_id: &str, form: &ParamFor
 
 pub fn draw_confirm(frame: &mut Frame, area: Rect, app: &App, confirm: &Confirm) {
     let bpftrace = app.bpftrace_path().unwrap_or(Path::new("bpftrace"));
-    let command_line = match confirm.argv(bpftrace) {
+    let command_line = match confirm.argv(bpftrace, app.target().is_remote()) {
         Ok(argv) => command::display(&argv),
         Err(e) => format!("(invalid: {e})"),
     };
@@ -161,7 +161,7 @@ pub fn draw_confirm(frame: &mut Frame, area: Rect, app: &App, confirm: &Confirm)
 /// Why the run may fail here (spec §7): privileges, lockdown, validation result.
 fn run_warnings(app: &App, script_id: &str) -> Vec<Line<'static>> {
     let mut out = Vec::new();
-    if let Some(host) = &app.host {
+    if let Some(host) = &app.target().host {
         if host.privilege == Privilege::None {
             out.push(Line::styled(
                 "! Not running as root: bpftrace will fail to load and attach (start bpfdeck with sudo).",
@@ -176,7 +176,7 @@ fn run_warnings(app: &App, script_id: &str) -> Vec<Line<'static>> {
         }
     }
     if let Some(entry) = app.entries.iter().find(|e| e.id() == script_id)
-        && let ValidationState::Done(v) = &entry.validation
+        && let ValidationState::Done(v) = app.validation_of(entry)
     {
         match &v.verdict {
             Verdict::Failed { reason } => out.push(Line::styled(

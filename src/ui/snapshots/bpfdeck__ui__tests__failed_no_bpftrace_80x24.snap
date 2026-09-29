@@ -1,6 +1,6 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 238
+assertion_line: 307
 expression: "render(&app, 80, 24)"
 ---
 "╭ Scripts ─────────────────╮╭ 1 Info │ 2 Source │ 3 Validation ────────────────╮"
@@ -22,8 +22,8 @@ expression: "render(&app, 80, 24)"
 "│                          ││                                                  │"
 "│                          ││                                                  │"
 "│                          ││                                                  │"
-"│                          ││                                                  │"
-"│                          ││                                                  │"
-"│                          ││                                                  │"
 "╰──────────────────────────╯╰──────────────────────────────────────────────────╯"
-" validation disabled: cannot run bpftrace:  no bpftrace · 6.1.0-18-amd64 · root "
+"╭ [local · no bpftrace] │ + ──────────────────────────── root · 6.1.0-18-amd64 ╮"
+"│No bpftrace on local. c connects to a host where scripts can run.             │"
+"╰──────────────────────────────────────────────────────────────────────────────╯"
+" local: validation disabled: cannot run bp  no bpftrace · 6.1.0-18-amd64 · root "

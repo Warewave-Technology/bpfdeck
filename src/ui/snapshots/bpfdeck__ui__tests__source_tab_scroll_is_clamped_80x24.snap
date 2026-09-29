@@ -1,21 +1,18 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 235
+assertion_line: 240
 expression: backend
 ---
 "╭ Scripts (8) ─────────────╮╭ 1 Info │ 2 Source │ 3 Validation ────────────────╮"
-"│✗ missing_probe_demo  Atta││ 5 BEGIN                                          │"
-"│▾ net/  1                 ││ 6 {                                              │"
-"│  ● tcpconnect_demo  Print││ 7   printf("Tracing vfs_read latency... Hit Ctrl-│"
-"│● no_header               ││ 8 }                                              │"
-"│● params_demo  Positional ││ 9                                                │"
-"│… shebang_no_ext  Discover││10 kprobe:vfs_read                                │"
-"│● syscount_demo  Count sys││11 {                                              │"
-"│! unsafe_demo  Uses system││12   @start[tid] = nsecs;                         │"
-"│◐ vfs_latency_demo  vfs_re││13 }                                              │"
-"│                          ││14                                                │"
-"│                          ││15 kretprobe:vfs_read                             │"
-"│                          ││16 /@start[tid]/                                  │"
+"│✗ missing_probe_demo  Atta││ 8 }                                              │"
+"│▾ net/  1                 ││ 9                                                │"
+"│  ● tcpconnect_demo  Print││10 kprobe:vfs_read                                │"
+"│● no_header               ││11 {                                              │"
+"│● params_demo  Positional ││12   @start[tid] = nsecs;                         │"
+"│… shebang_no_ext  Discover││13 }                                              │"
+"│● syscount_demo  Count sys││14                                                │"
+"│! unsafe_demo  Uses system││15 kretprobe:vfs_read                             │"
+"│◐ vfs_latency_demo  vfs_re││16 /@start[tid]/                                  │"
 "│                          ││17 {                                              │"
 "│                          ││18   @usecs = hist((nsecs - @start[tid]) / 1000); │"
 "│                          ││19   delete(@start, tid);                         │"
@@ -26,4 +23,7 @@ expression: backend
 "│                          ││24   clear(@start);                               │"
 "│                          ││25 }                                              │"
 "╰──────────────────────────╯╰──────────────────────────────────────────────────╯"
+"╭ [local] │ + ────────────────────────────────────────── root · 6.1.0-18-amd64 ╮"
+"│No run on local yet: select a script and press Enter. c connects to a host.   │"
+"╰──────────────────────────────────────────────────────────────────────────────╯"
 " Enter run / filter ? help q quit      bpftrace v0.21.2 · 6.1.0-18-amd64 · root "

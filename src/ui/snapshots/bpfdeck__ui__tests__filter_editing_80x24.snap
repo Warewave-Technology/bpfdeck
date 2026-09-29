@@ -1,6 +1,6 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 204
+assertion_line: 262
 expression: "render(&app, 80, 24)"
 ---
 "╭ Scripts (6/8) ───────────╮╭ 1 Info │ 2 Source │ 3 Validation ────────────────╮"
@@ -21,9 +21,9 @@ expression: "render(&app, 80, 24)"
 "│                          ││                                                  │"
 "│                          ││                                                  │"
 "│                          ││                                                  │"
-"│                          ││                                                  │"
-"│                          ││                                                  │"
-"│                          ││                                                  │"
 "│/dem█                     ││                                                  │"
 "╰──────────────────────────╯╰──────────────────────────────────────────────────╯"
+"╭ [local] │ + ────────────────────────────────────────── root · 6.1.0-18-amd64 ╮"
+"│No run on local yet: select a script and press Enter. c connects to a host.   │"
+"╰──────────────────────────────────────────────────────────────────────────────╯"
 " Enter keep Esc clear ↓ next ↑ prev    bpftrace v0.21.2 · 6.1.0-18-amd64 · root "

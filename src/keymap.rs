@@ -86,6 +86,8 @@ pub enum Action {
     ToggleTree,
     Collapse,
     Expand,
+    PrevTarget,
+    NextTarget,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -153,6 +155,8 @@ pub const BINDINGS: &[Binding] = &[
     bind(Browser, &[key(Enter)], "Enter", Action::Run, "run script / open dir", Some("run")),
     bind(Browser, &[ch('o')], "o", Action::ShowRun, "show last run output", None),
     bind(Browser, &[ch('t')], "t", Action::ToggleTree, "tree / flat list", None),
+    bind(Browser, &[ch('<')], "<", Action::PrevTarget, "previous target tab", None),
+    bind(Browser, &[ch('>')], ">", Action::NextTarget, "next target tab", None),
     bind(Browser, &[ch('h'), key(Left)], "h/←", Action::Collapse, "collapse dir / go to parent", None),
     bind(Browser, &[ch('l'), key(Right)], "l/→", Action::Expand, "expand dir", None),
     bind(Browser, &[key(Tab)], "Tab", Action::NextTab, "next detail tab", None),
@@ -195,7 +199,9 @@ pub const BINDINGS: &[Binding] = &[
     bind(Run, &[key(PageUp), ctrl('u')], "PgUp/C-u", Action::ScrollUp, "page up (pauses)", None),
     bind(Run, &[ch('g'), key(Home)], "g/Home", Action::Top, "oldest line (pauses)", None),
     bind(Run, &[ch('G'), key(End)], "G/End", Action::Bottom, "newest line, follow", None),
-    bind(Run, &[ch('z')], "z", Action::ToggleFullWidth, "toggle full width", None),
+    bind(Run, &[ch('z')], "z", Action::ToggleFullWidth, "maximize results", None),
+    bind(Run, &[ch('<')], "<", Action::PrevTarget, "previous target tab", None),
+    bind(Run, &[ch('>')], ">", Action::NextTarget, "next target tab", None),
     bind(Run, &[key(Tab)], "Tab", Action::NextTab, "next panel", Some("panel")),
     bind(Run, &[key(BackTab)], "S-Tab", Action::PrevTab, "previous panel", None),
     bind(Run, &[ch('[')], "[", Action::PrevKey, "previous key (keyed hist)", None),

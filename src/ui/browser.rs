@@ -86,11 +86,7 @@ pub fn draw_list(frame: &mut Frame, area: Rect, app: &App) {
             frame.render_widget(Paragraph::new(Line::styled("no matches", Theme::muted())), body);
         }
         LoadState::Ready => {
-            let running = app
-                .run
-                .as_ref()
-                .filter(|r| r.is_active())
-                .map(|r| r.script_id.as_str());
+            let running = app.target().active_run().map(|r| r.script_id.as_str());
             let tree = app.showing_tree();
             let items: Vec<ListItem> = app
                 .rows
@@ -98,7 +94,12 @@ pub fn draw_list(frame: &mut Frame, area: Rect, app: &App) {
                 .map(|row| match row {
                     ListRow::Script { entry, depth } => {
                         let e = &app.entries[*entry];
-                        list_row(e, running == Some(e.id()), tree.then_some(*depth))
+                        list_row(
+                            e,
+                            app.validation_of(e),
+                            running == Some(e.id()),
+                            tree.then_some(*depth),
+                        )
                     }
                     ListRow::Dir {
                         path,
@@ -139,11 +140,16 @@ fn dir_row(path: &str, depth: usize, expanded: bool, scripts: usize) -> ListItem
 
 /// `● net/tcpconnect_demo  Description.  (reason)`, the directory dimmed; `▶` while running.
 /// In tree view (`depth` set) the row is indented and the directory is implied.
-fn list_row(entry: &Entry, running: bool, depth: Option<usize>) -> ListItem<'static> {
+fn list_row(
+    entry: &Entry,
+    state: &ValidationState,
+    running: bool,
+    depth: Option<usize>,
+) -> ListItem<'static> {
     let (g, style) = if running {
         ("▶", Theme::running())
     } else {
-        glyph(&entry.validation)
+        glyph(state)
     };
     let id = entry.id();
     let (dir, name) = match id.rsplit_once('/') {
@@ -162,7 +168,7 @@ fn list_row(entry: &Entry, running: bool, depth: Option<usize>) -> ListItem<'sta
     if let Some(desc) = &entry.script.meta.description {
         spans.push(Span::styled(format!("  {desc}"), Theme::muted()));
     }
-    if let Some(suffix) = row_suffix(&entry.validation) {
+    if let Some(suffix) = row_suffix(state) {
         spans.push(Span::styled(format!("  {suffix}"), style));
     }
     ListItem::new(Line::from(spans))
@@ -232,7 +238,7 @@ pub fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
     let (lines, wrap) = match app.tab {
         0 => (info_lines(entry, app), true),
         1 => (source_view::lines(&entry.script.content), false),
-        _ => (validation_lines(entry), true),
+        _ => (validation_lines(app, entry), true),
     };
 
     // Clamp the scroll offset to the content (the app can't know the pane height).
@@ -274,13 +280,19 @@ fn fields(label: &str, rows: Vec<Vec<Span<'static>>>) -> Vec<Line<'static>> {
         .collect()
 }
 
-fn status_spans(state: &ValidationState) -> Vec<Span<'static>> {
+/// Where "runs here" refers to: `None` for local, the host label for a remote target.
+fn place(app: &App) -> Option<String> {
+    let t = app.target();
+    t.is_remote().then(|| t.label.clone())
+}
+
+fn status_spans(state: &ValidationState, place: Option<String>) -> Vec<Span<'static>> {
     let (g, style) = glyph(state);
     let text = match state {
         ValidationState::Pending => "validating…".to_string(),
         ValidationState::Skipped(reason) => format!("not validated: {reason}"),
         ValidationState::Done(v) => match &v.verdict {
-            Verdict::Ok => "runs here".to_string(),
+            Verdict::Ok => place.map_or_else(|| "runs here".to_string(), |p| format!("runs on {p}")),
             Verdict::Partial { found, total } => format!("{found}/{total} probes found"),
             Verdict::NeedsUnsafe => "needs --unsafe".to_string(),
             Verdict::Failed { reason } => format!("cannot run here: {reason}"),
@@ -311,7 +323,7 @@ fn info_lines(entry: &Entry, app: &App) -> Vec<Line<'static>> {
             None => Line::styled("(no description)", Theme::muted()),
         },
         Line::raw(""),
-        field("Status", status_spans(&entry.validation)),
+        field("Status", status_spans(app.validation_of(entry), place(app))),
         field(
             "File",
             vec![
@@ -331,7 +343,7 @@ fn info_lines(entry: &Entry, app: &App) -> Vec<Line<'static>> {
     let probe_rows: Vec<Vec<Span<'static>>> = if meta.probes.is_empty() {
         vec![vec![Span::styled("none found", Theme::muted())]]
     } else {
-        let done = match &entry.validation {
+        let done = match app.validation_of(entry) {
             ValidationState::Done(v) => Some(v),
             _ => None,
         };
@@ -404,7 +416,7 @@ fn info_lines(entry: &Entry, app: &App) -> Vec<Line<'static>> {
             )],
         ));
     }
-    if let BpftraceState::Missing(reason) = &app.bpftrace {
+    if let BpftraceState::Missing(reason) = &app.target().bpftrace {
         lines.push(Line::raw(""));
         lines.push(Line::styled(
             format!("bpftrace unavailable: {reason}"),
@@ -427,9 +439,10 @@ fn probe_found(v: &Validation, spec: &str) -> Option<bool> {
     }
 }
 
-fn validation_lines(entry: &Entry) -> Vec<Line<'static>> {
-    let mut lines = vec![field("Result", status_spans(&entry.validation))];
-    let ValidationState::Done(v) = &entry.validation else {
+fn validation_lines(app: &App, entry: &Entry) -> Vec<Line<'static>> {
+    let state = app.validation_of(entry);
+    let mut lines = vec![field("Result", status_spans(state, place(app)))];
+    let ValidationState::Done(v) = state else {
         return lines;
     };
     let how = match v.strategy {
@@ -468,7 +481,7 @@ fn dir_lines(app: &App, path: &str, scripts: usize) -> Vec<Line<'static>> {
         ("?", Theme::muted(), "not validated", 0),
     ];
     for e in app.entries.iter().filter(|e| e.id().starts_with(&prefix)) {
-        let (g, _) = glyph(&e.validation);
+        let (g, _) = glyph(app.validation_of(e));
         if let Some(c) = counts.iter_mut().find(|c| c.0 == g) {
             c.3 += 1;
         }

@@ -84,6 +84,10 @@ impl Theme {
     pub fn tab_inactive() -> Style {
         Style::new().fg(GRAY)
     }
+    /// A target that cannot run anything (no bpftrace, connection lost): stands out.
+    pub fn tab_broken() -> Style {
+        Style::new().fg(RED).add_modifier(Modifier::BOLD)
+    }
     /// Persistent full-width warning (kernel lockdown).
     pub fn banner_error() -> Style {
         Style::new().fg(BG0_H).bg(RED).add_modifier(Modifier::BOLD)

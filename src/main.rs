@@ -7,6 +7,7 @@ mod keymap;
 mod list;
 mod model;
 mod msg;
+mod remote;
 mod source;
 mod sys;
 mod tui;

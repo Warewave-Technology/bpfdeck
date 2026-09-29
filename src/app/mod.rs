@@ -2,10 +2,11 @@
 
 mod filter;
 mod run;
+pub mod target;
 pub mod tree;
 
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
@@ -20,6 +21,7 @@ use crate::source::{Origin, ResolvedSource, SourceSpec};
 use crate::sys::SystemInfo;
 use filter::Fuzzy;
 pub use run::{Ask, Confirm, LogView};
+use target::{LOCAL, Target, TargetId};
 use tree::ListRow;
 
 pub const TABS: [&str; 3] = ["Info", "Source", "Validation"];
@@ -55,23 +57,32 @@ pub enum ValidationState {
     Skipped(String),
 }
 
+/// Not validated yet on a target (no entry in `Entry::validations`).
+static PENDING: ValidationState = ValidationState::Pending;
+
 #[derive(Debug, Clone)]
 pub struct Entry {
     pub script: Script,
     pub request: ValidationRequest,
-    pub validation: ValidationState,
+    /// Per target: each host validates the same script on its own kernel.
+    pub validations: HashMap<TargetId, ValidationState>,
 }
 
 impl Entry {
     pub fn id(&self) -> &str {
         &self.script.file.id
     }
+
+    pub fn validation(&self, target: TargetId) -> &ValidationState {
+        self.validations.get(&target).unwrap_or(&PENDING)
+    }
 }
 
+/// Which pane has the keyboard: the browser (top) or the results pane (bottom).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     Browser,
-    /// The right pane shows the run (header + log).
+    /// The active target's results tab (run header, panels, log).
     Run,
 }
 
@@ -104,8 +115,11 @@ pub struct App {
     pub load: LoadState,
     pub source: Option<ResolvedSource>,
     pub entries: Vec<Entry>,
-    pub host: Option<SystemInfo>,
-    pub bpftrace: BpftraceState,
+    /// `local` first, then connected hosts, in tab order.
+    pub targets: Vec<Target>,
+    /// Index into `targets` of the selected tab: the active target.
+    pub active: usize,
+    next_target_id: TargetId,
     /// Indices into `entries` matching the filter, in display order (ranked).
     pub visible: Vec<usize>,
     /// What the list shows: scripts, and directory rows in tree view.
@@ -128,10 +142,7 @@ pub struct App {
     /// Detail scroll offset. The renderer clamps it to the content, hence the `Cell`.
     pub scroll: Cell<u16>,
     pub notice: Option<Notice>,
-    /// The current or last run (D-010: one at a time). Its output stays viewable.
-    pub run: Option<Run>,
-    pub log_view: LogView,
-    /// Run view takes the whole width (`z`).
+    /// The results pane takes the whole screen (`z`).
     pub full_width: bool,
     next_run_id: u64,
     quit_after_run: bool,
@@ -146,8 +157,9 @@ impl App {
             load: LoadState::Loading(String::new()),
             source: None,
             entries: Vec::new(),
-            host: None,
-            bpftrace: BpftraceState::Detecting,
+            targets: vec![Target::local()],
+            active: 0,
+            next_target_id: LOCAL + 1,
             visible: Vec::new(),
             rows: Vec::new(),
             cursor: 0,
@@ -162,8 +174,6 @@ impl App {
             tab: 0,
             scroll: Cell::new(0),
             notice: None,
-            run: None,
-            log_view: LogView::following(),
             full_width: false,
             next_run_id: 0,
             quit_after_run: false,
@@ -175,11 +185,43 @@ impl App {
     pub fn init(&mut self) -> Vec<Cmd> {
         self.load = LoadState::Loading(loading_message(&self.input));
         vec![
-            Cmd::DetectEnv,
+            Cmd::DetectEnv { target: LOCAL },
             Cmd::Load {
                 input: self.input.clone(),
             },
         ]
+    }
+
+    /// The active target (selected results tab).
+    pub fn target(&self) -> &Target {
+        &self.targets[self.active.min(self.targets.len() - 1)]
+    }
+
+    pub fn target_mut(&mut self) -> &mut Target {
+        let i = self.active.min(self.targets.len() - 1);
+        &mut self.targets[i]
+    }
+
+    pub fn target_by_id(&mut self, id: TargetId) -> Option<&mut Target> {
+        self.targets.iter_mut().find(|t| t.id == id)
+    }
+
+    /// The target whose current run has this id.
+    fn target_by_run(&mut self, run_id: u64) -> Option<&mut Target> {
+        self.targets
+            .iter_mut()
+            .find(|t| t.run.as_ref().is_some_and(|r| r.id == run_id))
+    }
+
+    /// Validation state of `entry` on the active target.
+    pub fn validation_of<'a>(&self, entry: &'a Entry) -> &'a ValidationState {
+        entry.validation(self.target().id)
+    }
+
+    fn switch_target(&mut self, delta: isize) {
+        let n = self.targets.len() as isize;
+        self.active = (self.active as isize + delta).rem_euclid(n) as usize;
+        self.scroll.set(0);
     }
 
     /// The script under the cursor (`None` on a directory row).
@@ -216,14 +258,14 @@ impl App {
             (Some(Overlay::Ask(_)), _) => Context::Ask,
             (None, Screen::Browser) if self.filter_editing => Context::Filter,
             (None, Screen::Browser) => Context::Browser,
-            (None, Screen::Run) if self.log_view.editing => Context::LogFilter,
+            (None, Screen::Run) if self.target().log_view.editing => Context::LogFilter,
             (None, Screen::Run) => Context::Run,
         }
     }
 
-    /// The run is showing in the right pane.
-    pub fn showing_run(&self) -> Option<&Run> {
-        self.run.as_ref().filter(|_| self.screen == Screen::Run)
+    /// The active target's current or last run.
+    pub fn active_run(&self) -> Option<&Run> {
+        self.target().run.as_ref()
     }
 
     pub fn update(&mut self, msg: Msg) -> Vec<Cmd> {
@@ -235,8 +277,13 @@ impl App {
                 Vec::new()
             }
             Msg::Loaded(result) => self.on_loaded(result),
-            Msg::EnvDetected { host, bpftrace } => self.on_env(host, bpftrace),
+            Msg::EnvDetected {
+                target,
+                host,
+                bpftrace,
+            } => self.on_env(target, host, bpftrace),
             Msg::Validated {
+                target,
                 id,
                 content_hash,
                 validation,
@@ -248,7 +295,9 @@ impl App {
                     .iter_mut()
                     .find(|e| e.script.file.id == id && e.request.content_hash == content_hash)
                 {
-                    entry.validation = ValidationState::Done(validation);
+                    entry
+                        .validations
+                        .insert(target, ValidationState::Done(validation));
                 }
                 Vec::new()
             }
@@ -289,7 +338,7 @@ impl App {
                 Vec::new()
             }
             Msg::Tick(now) => {
-                if let Some(run) = &mut self.run {
+                for run in self.targets.iter_mut().filter_map(|t| t.run.as_mut()) {
                     run.tick(now);
                 }
                 Vec::new()
@@ -316,17 +365,22 @@ impl App {
         };
         let keep = self.current_key();
         let first_load = self.source.is_none();
-        let pending = match &self.bpftrace {
-            BpftraceState::Missing(reason) => ValidationState::Skipped(reason.clone()),
-            _ => ValidationState::Pending,
-        };
+        // Where bpftrace is known to be missing, say so instead of "pending".
+        let skipped: HashMap<TargetId, ValidationState> = self
+            .targets
+            .iter()
+            .filter_map(|t| match &t.bpftrace {
+                BpftraceState::Missing(reason) => Some((t.id, ValidationState::Skipped(reason.clone()))),
+                _ => None,
+            })
+            .collect();
         self.entries = catalog
             .scripts
             .into_iter()
             .map(|script| Entry {
                 request: ValidationRequest::new(&script.file.path, &script.content, &script.meta),
                 script,
-                validation: pending.clone(),
+                validations: skipped.clone(),
             })
             .collect();
         self.source = Some(catalog.source);
@@ -351,39 +405,53 @@ impl App {
         self.validation_cmds()
     }
 
-    fn on_env(&mut self, host: SystemInfo, bpftrace: Result<(BpftraceInfo, Strategy), String>) -> Vec<Cmd> {
-        self.host = Some(host);
+    fn on_env(
+        &mut self,
+        target: TargetId,
+        host: SystemInfo,
+        bpftrace: Result<(BpftraceInfo, Strategy), String>,
+    ) -> Vec<Cmd> {
+        let Some(t) = self.target_by_id(target) else {
+            return Vec::new();
+        };
+        t.host = Some(host);
         match bpftrace {
             Ok((info, strategy)) => {
-                self.bpftrace = BpftraceState::Ready { info, strategy };
+                t.bpftrace = BpftraceState::Ready { info, strategy };
                 self.validation_cmds()
             }
             Err(reason) => {
+                let label = t.label.clone();
+                t.bpftrace = BpftraceState::Missing(reason.clone());
                 for entry in &mut self.entries {
-                    if entry.validation == ValidationState::Pending {
-                        entry.validation = ValidationState::Skipped(reason.clone());
+                    if entry.validation(target) == &ValidationState::Pending {
+                        entry
+                            .validations
+                            .insert(target, ValidationState::Skipped(reason.clone()));
                     }
                 }
-                self.notify(Level::Warn, format!("validation disabled: {reason}"));
-                self.bpftrace = BpftraceState::Missing(reason);
+                self.notify(Level::Warn, format!("{label}: validation disabled: {reason}"));
                 Vec::new()
             }
         }
     }
 
-    /// Validate every pending script, once both the scripts and bpftrace are known.
+    /// Validate every pending script on every target that can take it.
     fn validation_cmds(&self) -> Vec<Cmd> {
-        if !matches!(self.bpftrace, BpftraceState::Ready { .. }) {
-            return Vec::new();
+        let mut cmds = Vec::new();
+        for t in self.targets.iter().filter(|t| t.usable()) {
+            cmds.extend(
+                self.entries
+                    .iter()
+                    .filter(|e| e.validation(t.id) == &ValidationState::Pending)
+                    .map(|e| Cmd::Validate {
+                        target: t.id,
+                        id: e.id().to_string(),
+                        request: e.request.clone(),
+                    }),
+            );
         }
-        self.entries
-            .iter()
-            .filter(|e| e.validation == ValidationState::Pending)
-            .map(|e| Cmd::Validate {
-                id: e.id().to_string(),
-                request: e.request.clone(),
-            })
-            .collect()
+        cmds
     }
 
     fn rescan(&mut self) -> Vec<Cmd> {
@@ -482,8 +550,10 @@ impl App {
             }
             Action::Collapse => self.collapse(),
             Action::Expand => self.expand(),
+            Action::PrevTarget => self.switch_target(-1),
+            Action::NextTarget => self.switch_target(1),
             Action::ShowRun => {
-                if self.run.is_some() {
+                if self.active_run().is_some() {
                     self.screen = Screen::Run;
                 } else {
                     self.notify(Level::Info, "no run yet: select a script and press Enter".into());
@@ -735,12 +805,13 @@ pub(crate) mod fixtures {
         let mut app = App::new("/srv/bpf".into());
         app.init();
         app.update(Msg::EnvDetected {
+            target: LOCAL,
             host,
             bpftrace: Ok(bpftrace()),
         });
         let cmds = app.update(Msg::Loaded(Ok(catalog())));
         for cmd in cmds {
-            let Cmd::Validate { id, request } = cmd else {
+            let Cmd::Validate { id, request, .. } = cmd else {
                 continue;
             };
             let v = match id.as_str() {
@@ -779,6 +850,7 @@ pub(crate) mod fixtures {
                 _ => validation(Verdict::Ok, "", &[], &[]),
             };
             app.update(Msg::Validated {
+                target: LOCAL,
                 id,
                 content_hash: request.content_hash,
                 validation: v,
@@ -824,7 +896,7 @@ mod tests {
         assert_eq!(
             cmds,
             vec![
-                Cmd::DetectEnv,
+                Cmd::DetectEnv { target: LOCAL },
                 Cmd::Load {
                     input: "https://github.com/bpftrace/bpftrace#v0.21.0".into()
                 }
@@ -843,6 +915,7 @@ mod tests {
         app.init();
         assert!(app.update(Msg::Loaded(Ok(catalog()))).is_empty());
         let cmds = app.update(Msg::EnvDetected {
+            target: LOCAL,
             host: host(Privilege::Root, Lockdown::None),
             bpftrace: Ok(bpftrace()),
         });
@@ -852,6 +925,7 @@ mod tests {
         let mut app = App::new("x".into());
         app.init();
         let cmds = app.update(Msg::EnvDetected {
+            target: LOCAL,
             host: host(Privilege::Root, Lockdown::None),
             bpftrace: Ok(bpftrace()),
         });
@@ -865,6 +939,7 @@ mod tests {
         app.init();
         app.update(Msg::Loaded(Ok(catalog())));
         let cmds = app.update(Msg::EnvDetected {
+            target: LOCAL,
             host: host(Privilege::None, Lockdown::Unknown),
             bpftrace: Err("cannot run bpftrace: not found".into()),
         });
@@ -872,7 +947,7 @@ mod tests {
         assert!(
             app.entries
                 .iter()
-                .all(|e| matches!(e.validation, ValidationState::Skipped(_)))
+                .all(|e| matches!(e.validation(LOCAL), ValidationState::Skipped(_)))
         );
         assert_eq!(app.notice.as_ref().map(|n| n.level), Some(Level::Warn));
         // A rescan keeps them skipped and asks for nothing.
@@ -883,6 +958,7 @@ mod tests {
     fn stale_validation_results_are_ignored() {
         let mut app = ready_app(host(Privilege::Root, Lockdown::None));
         app.update(Msg::Validated {
+            target: LOCAL,
             id: "shebang_no_ext".into(),
             content_hash: "not-the-current-content".into(),
             validation: ok_validation(),
@@ -892,7 +968,7 @@ mod tests {
             .iter()
             .find(|e| e.id() == "shebang_no_ext")
             .expect("entry");
-        assert_eq!(after.validation, ValidationState::Pending);
+        assert_eq!(after.validation(LOCAL), &ValidationState::Pending);
     }
 
     #[test]

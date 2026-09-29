@@ -3,6 +3,7 @@ pub mod theme;
 mod browser;
 mod help;
 mod modals;
+mod results;
 mod run_view;
 mod source_view;
 mod widgets;
@@ -12,7 +13,7 @@ use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use crate::app::{App, BpftraceState, Level, Overlay};
+use crate::app::{App, BpftraceState, Level, Overlay, Screen};
 use crate::sys::{Lockdown, Privilege};
 use theme::Theme;
 
@@ -28,6 +29,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
 
     let lockdown = app
+        .target()
         .host
         .as_ref()
         .map(|h| h.lockdown)
@@ -42,20 +44,22 @@ pub fn draw(frame: &mut Frame, app: &App) {
         draw_lockdown_banner(frame, banner, mode);
     }
 
-    match app.showing_run() {
-        Some(run) if app.full_width => run_view::draw(frame, main, app, run),
-        Some(run) => {
-            let [list, detail] =
-                Layout::horizontal([Constraint::Percentage(30), Constraint::Percentage(70)]).areas(main);
-            browser::draw_list(frame, list, app);
-            run_view::draw(frame, detail, app, run);
-        }
-        None => {
-            let [list, detail] =
-                Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).areas(main);
-            browser::draw_list(frame, list, app);
-            browser::draw_detail(frame, detail, app);
-        }
+    // Browser on top, results tabs at the bottom: small until there is something to show.
+    let results_open = app.active_run().is_some() || app.screen == Screen::Run;
+    if app.full_width && results_open {
+        results::draw(frame, main, app);
+    } else {
+        let bottom = if results_open {
+            Constraint::Percentage(58)
+        } else {
+            Constraint::Length(3)
+        };
+        let [top, results_area] = Layout::vertical([Constraint::Min(5), bottom]).areas(main);
+        let [list, detail] =
+            Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).areas(top);
+        browser::draw_list(frame, list, app);
+        browser::draw_detail(frame, detail, app);
+        results::draw(frame, results_area, app);
     }
     draw_status(frame, status, app);
 
@@ -135,7 +139,11 @@ fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
 /// `bpftrace v0.21.2 · 6.1.0-18-amd64 · root`
 fn env_spans(app: &App) -> Vec<Span<'static>> {
     let mut spans = vec![Span::raw("  ")];
-    match &app.bpftrace {
+    let t = app.target();
+    if t.is_remote() {
+        spans.push(Span::styled(format!("{} · ", t.label), Theme::status_bar()));
+    }
+    match &t.bpftrace {
         BpftraceState::Detecting => spans.push(Span::styled("detecting bpftrace…", Theme::status_bar())),
         BpftraceState::Ready { info, .. } => {
             let version = info
@@ -145,7 +153,7 @@ fn env_spans(app: &App) -> Vec<Span<'static>> {
         }
         BpftraceState::Missing(_) => spans.push(Span::styled("no bpftrace", Theme::badge_error())),
     }
-    if let Some(host) = &app.host {
+    if let Some(host) = &t.host {
         spans.push(Span::styled(
             format!(" · {} · ", host.kernel_release),
             Theme::status_bar(),
@@ -164,6 +172,7 @@ fn env_spans(app: &App) -> Vec<Span<'static>> {
 mod tests {
     use super::*;
     use crate::app::fixtures::*;
+    use crate::app::target::LOCAL;
     use crate::bpftrace::coalesce::one;
     use crate::msg::Msg;
     use crate::sys::{Lockdown, Privilege};
@@ -229,9 +238,9 @@ mod tests {
             keys(&mut app, &[KeyCode::PageDown]);
         }
         let backend = render(&app, 80, 24);
-        // The pane is 21 lines high: scrolling stops when the last line is on screen.
+        // The pane is 18 lines high (results pane below): scrolling stops when the last line is on screen.
         let lines = app.selected().map_or(0, |e| e.script.content.lines().count());
-        assert_eq!(usize::from(app.scroll.get()), lines - 21);
+        assert_eq!(usize::from(app.scroll.get()), lines - 18);
         insta::assert_snapshot!(backend);
     }
 
@@ -291,6 +300,7 @@ mod tests {
                 .into(),
         )));
         app.update(Msg::EnvDetected {
+            target: LOCAL,
             host: host(Privilege::Root, Lockdown::None),
             bpftrace: Err("cannot run bpftrace: No such file or directory (os error 2)".into()),
         });

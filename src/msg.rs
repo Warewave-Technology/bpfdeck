@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use ratatui::crossterm::event::KeyEvent;
 
+use crate::app::target::TargetId;
 use crate::bpftrace::BpftraceInfo;
 use crate::bpftrace::coalesce::Batch;
 use crate::bpftrace::validate::{Strategy, Validation, ValidationRequest};
@@ -25,10 +26,12 @@ pub enum Msg {
     Loaded(Result<Catalog, String>),
     /// Result of `Cmd::DetectEnv`. `bpftrace` is `Err` when it can't be run here.
     EnvDetected {
+        target: TargetId,
         host: SystemInfo,
         bpftrace: Result<(BpftraceInfo, Strategy), String>,
     },
     Validated {
+        target: TargetId,
         id: String,
         content_hash: String,
         validation: Validation,
@@ -65,38 +68,34 @@ pub enum Msg {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cmd {
     /// Resolve the source (clone/update git) and scan it.
-    Load {
-        input: String,
-    },
+    Load { input: String },
     /// Scan the already resolved source again (no git access).
-    Rescan {
-        source: ResolvedSource,
-    },
+    Rescan { source: ResolvedSource },
     /// Host facts + bpftrace capabilities; sets up the validator.
-    DetectEnv,
+    DetectEnv { target: TargetId },
     Validate {
+        target: TargetId,
         id: String,
         request: ValidationRequest,
     },
     /// Suspend the TUI and run `$EDITOR`. `copy`: edit a temporary copy (git sources).
-    OpenEditor {
-        id: String,
-        path: PathBuf,
-        copy: bool,
-    },
+    OpenEditor { id: String, path: PathBuf, copy: bool },
     /// Spawn bpftrace with this exact argv (built by `bpftrace::command::run_argv`).
+    /// On a remote target `argv` names `script.bt`; `script` is the local file to copy.
     StartRun {
+        target: TargetId,
         run_id: u64,
         argv: Vec<OsString>,
+        script: PathBuf,
     },
     /// Graceful stop: SIGINT, then SIGTERM/SIGKILL on timeouts.
-    StopRun {
-        run_id: u64,
-    },
+    StopRun { target: TargetId, run_id: u64 },
     /// Write `text` (see `model::export`) and a copy of the run's raw NDJSON to files.
+    /// `host` is set for remote targets and goes into the file names.
     ExportRun {
         run_id: u64,
         script_id: String,
+        host: Option<String>,
         text: String,
     },
 }
