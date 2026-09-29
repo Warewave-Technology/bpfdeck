@@ -1008,6 +1008,30 @@ mod tests {
     }
 
     #[test]
+    fn hosts_that_disagree_are_counted() {
+        let mut app = ready();
+        let id = |app: &App, name: &str| app.entries.iter().position(|e| e.id() == name).expect("entry");
+        // Only local: never a count.
+        let syscount = id(&app, "syscount_demo.bt");
+        assert_eq!(app.disagreement(&app.entries[syscount]), None);
+        connect_validated(&mut app, "db-02", &["net/tcpconnect_demo.bt"]);
+        connect_validated(&mut app, "db-03", &[]);
+        let count = |app: &App, name: &str| app.disagreement(&app.entries[id(app, name)]);
+        assert_eq!(count(&app, "syscount_demo.bt"), None, "runs everywhere");
+        assert_eq!(count(&app, "net/tcpconnect_demo.bt"), Some((2, 3)));
+        // Fails locally only (fixture), passes on both hosts.
+        assert_eq!(count(&app, "missing_probe_demo.bt"), Some((2, 3)));
+        // Pending somewhere: counted over the results that are in.
+        assert_eq!(count(&app, "shebang_no_ext"), None);
+        // A lost host no longer counts.
+        app.update(Msg::ConnectionLost {
+            target: 2,
+            reason: "gone".into(),
+        });
+        assert_eq!(count(&app, "net/tcpconnect_demo.bt"), Some((1, 2)));
+    }
+
+    #[test]
     fn disconnecting() {
         let mut app = ready();
         assert!(press(&mut app, KeyCode::Char('d')).is_empty(), "local stays");

@@ -409,6 +409,20 @@ mod tests {
     }
 
     #[test]
+    fn validation_on_each_target_120x40() {
+        let mut app = ready();
+        connect_validated(&mut app, "ops@db-02", &["net/tcpconnect_demo.bt"]);
+        connect_validated(&mut app, "ops@db-03", &[]);
+        app.update(Msg::ConnectionLost {
+            target: 2,
+            reason: "the ssh connection closed".into(),
+        });
+        app.notice = None;
+        keys(&mut app, &[KeyCode::Char('<'), KeyCode::Char('3')]); // missing_probe_demo on db-02
+        insta::assert_snapshot!(render(&app, 120, 40));
+    }
+
+    #[test]
     fn remote_tab_active_120x40() {
         let mut app = ready();
         connect(&mut app, "ops@10.0.3.14");

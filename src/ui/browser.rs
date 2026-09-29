@@ -97,6 +97,7 @@ pub fn draw_list(frame: &mut Frame, area: Rect, app: &App) {
                         list_row(
                             e,
                             app.validation_of(e),
+                            app.disagreement(e),
                             running == Some(e.id()),
                             tree.then_some(*depth),
                         )
@@ -140,9 +141,11 @@ fn dir_row(path: &str, depth: usize, expanded: bool, scripts: usize) -> ListItem
 
 /// `● net/tcpconnect_demo  Description.  (reason)`, the directory dimmed; `▶` while running.
 /// In tree view (`depth` set) the row is indented and the directory is implied.
+/// `hosts`: `(runs, validated)` when the targets disagree (see `App::disagreement`).
 fn list_row(
     entry: &Entry,
     state: &ValidationState,
+    hosts: Option<(usize, usize)>,
     running: bool,
     depth: Option<usize>,
 ) -> ListItem<'static> {
@@ -165,6 +168,9 @@ fn list_row(
         Span::styled(dir, Theme::muted()),
         Span::raw(name),
     ];
+    if let Some((runs, of)) = hosts {
+        spans.push(Span::styled(format!(" {runs}/{of}"), Theme::warn()));
+    }
     match &entry.draft {
         Some(d) if d.active => spans.push(Span::styled(format!(" ✎ {}", d.diff.summary()), Theme::accent())),
         Some(_) => spans.push(Span::styled(" ✎", Theme::muted())),
@@ -482,9 +488,68 @@ fn probe_found(v: &Validation, spec: &str) -> Option<bool> {
     }
 }
 
+/// One line per target: where the script runs and why not elsewhere (F2).
+fn target_matrix(app: &App, entry: &Entry) -> Vec<Line<'static>> {
+    let width = app
+        .targets
+        .iter()
+        .map(|t| t.label.chars().count())
+        .max()
+        .unwrap_or(0);
+    let mut lines = vec![Line::styled("On each target", Theme::label())];
+    for (i, t) in app.targets.iter().enumerate() {
+        let active = i == app.active;
+        let state = entry.validation(t.id);
+        let (g, style) = glyph(state);
+        if t.lost() {
+            lines.push(Line::from(vec![
+                Span::styled(if active { "▸ " } else { "  " }, Theme::key_hint()),
+                Span::styled(format!("{:<width$}  ", t.label), Theme::label()),
+                Span::styled("✗ connection lost", Theme::error()),
+            ]));
+            continue;
+        }
+        let text = match state {
+            ValidationState::Pending => "validating…".to_string(),
+            ValidationState::Skipped(reason) => reason.clone(),
+            ValidationState::Done(v) => match &v.verdict {
+                Verdict::Ok => format!("runs ({})", strategy_name(v.strategy)),
+                Verdict::Partial { found, total } => format!("{found}/{total} probes found"),
+                Verdict::NeedsUnsafe => "needs --unsafe".to_string(),
+                Verdict::Failed { reason } => reason.clone(),
+            },
+        };
+        let text_style = match state {
+            ValidationState::Done(v) if matches!(v.verdict, Verdict::Failed { .. }) => Theme::error(),
+            ValidationState::Done(_) => Theme::base(),
+            _ => Theme::muted(),
+        };
+        lines.push(Line::from(vec![
+            Span::styled(if active { "▸ " } else { "  " }, Theme::key_hint()),
+            Span::styled(
+                format!("{:<width$}  ", t.label),
+                if active { Theme::title() } else { Theme::label() },
+            ),
+            Span::styled(format!("{g} "), style),
+            Span::styled(text, text_style),
+        ]));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        format!("On {} (selected tab)", app.target().label),
+        Theme::label(),
+    ));
+    lines
+}
+
 fn validation_lines(app: &App, entry: &Entry) -> Vec<Line<'static>> {
     let state = app.validation_of(entry);
-    let mut lines = vec![field("Result", status_spans(state, place(app)))];
+    let mut lines = if app.targets.len() > 1 {
+        target_matrix(app, entry)
+    } else {
+        Vec::new()
+    };
+    lines.push(field("Result", status_spans(state, place(app))));
     let ValidationState::Done(v) = state else {
         return lines;
     };

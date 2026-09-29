@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::bpftrace::BpftraceInfo;
-use crate::bpftrace::validate::{Strategy, Validation, ValidationRequest};
+use crate::bpftrace::validate::{Strategy, Validation, ValidationRequest, Verdict};
 use crate::catalog::{Catalog, Script};
 use crate::keymap::{self, Action, Context};
 use crate::model::form::ParamForm;
@@ -254,6 +254,21 @@ impl App {
         self.targets
             .iter_mut()
             .find(|t| t.run.as_ref().is_some_and(|r| r.id == run_id))
+    }
+
+    /// Across the targets that can validate: on how many `entry` runs (verdict ● or `!`),
+    /// out of how many that have a result. `None` unless they disagree (F2).
+    pub fn disagreement(&self, entry: &Entry) -> Option<(usize, usize)> {
+        let (mut runs, mut done) = (0, 0);
+        for t in self.targets.iter().filter(|t| t.usable()) {
+            if let ValidationState::Done(v) = entry.validation(t.id) {
+                done += 1;
+                if matches!(v.verdict, Verdict::Ok | Verdict::NeedsUnsafe) {
+                    runs += 1;
+                }
+            }
+        }
+        (0 < runs && runs < done).then_some((runs, done))
     }
 
     /// Validation state of `entry` on the active target.
@@ -897,6 +912,30 @@ pub(crate) mod fixtures {
             supports_dry_run: true,
         };
         (info, Strategy::DryRun)
+    }
+
+    /// Connect `host_name` and validate every script there: `failed` fail, the rest pass.
+    pub fn connect_validated(app: &mut App, host_name: &str, failed: &[&str]) {
+        let cmds = connect(app, host_name);
+        let target = app.target().id;
+        for cmd in cmds {
+            let Cmd::Validate { id, request, .. } = cmd else {
+                continue;
+            };
+            let verdict = if failed.contains(&id.as_str()) {
+                Verdict::Failed {
+                    reason: "kprobe:tcp_connect: No such file or directory".into(),
+                }
+            } else {
+                Verdict::Ok
+            };
+            app.update(Msg::Validated {
+                target,
+                id,
+                content_hash: request.content_hash,
+                validation: validation(verdict, "", &[], &[]),
+            });
+        }
     }
 
     fn validation(verdict: Verdict, output: &str, notes: &[&str], probes: &[(&str, bool)]) -> Validation {

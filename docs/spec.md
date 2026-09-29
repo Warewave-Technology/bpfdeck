@@ -71,7 +71,9 @@ opening the directories above the selected script. A selected directory shows a 
 … opensnoop         (validating)
 ```
 The row shows no failure text (D-027): the `✗` says it, the reason is in the Info tab's
-Status line and the Validation tab.
+Status line and the Validation tab. The glyph is the selected tab's; when the targets
+that can validate disagree, the row adds `runs/validated` in yellow (`syscount 2/3`:
+validated on 3 hosts, runs on 2; "runs" = `●` or `!`).
 
 Status glyph + color (theme roles in `src/ui/theme.rs`):
 
@@ -91,7 +93,10 @@ Right pane, tabs (`Tab`/`Shift-Tab` or `1..3`):
 2. **Source** — the script with line numbers and light syntax highlighting (comments,
    strings, probe lines, builtins, `@maps`). Hand-written highlighter, no tree-sitter in v1.
    `i` edits the script right here (§6.8).
-3. **Validation** — raw stderr of the last dry-run / probe check, verbatim.
+3. **Validation** — raw stderr of the last dry-run / probe check, verbatim. With more
+   than one target, it starts with one line per target (F2): result or reason, `✗
+   connection lost` for a lost host, `▸` on the selected tab; the details below are the
+   selected tab's.
 
 Fuzzy filter: `/` opens an input line; matches name + description.
 
