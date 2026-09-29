@@ -47,7 +47,7 @@ jobs:
         run: |
           name="bpfdeck-${GITHUB_REF_NAME}-${{ matrix.target }}"
           mkdir -p "dist/$name"
-          cp "target/${{ matrix.target }}/release/bpfdeck" README.md "dist/$name/"
+          cp "target/${{ matrix.target }}/release/bpfdeck" README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
       - uses: actions/upload-artifact@v4

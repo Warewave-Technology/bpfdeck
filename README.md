@@ -71,6 +71,10 @@ shows the script's result on each target. Details: `docs/design-fleet.md`.
 `Tab` next panel · `w` export the run (`.txt` report + raw `.ndjson`, see `--export-dir`) ·
 `?` all keys.
 
+## License
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT) at your option.
+
 ## Docs
 - `docs/spec.md` — what it does
 - `docs/architecture.md` — how it's built
