@@ -300,6 +300,11 @@ runs will fail and the banner explains why.
   between the original and the draft without losing either. Editing back to the original
   text drops the draft. bpftrace reads a private copy (`<cache>/drafts/<pid>/`, 0700/0600,
   removed on exit); a remote run sends the edited text. Drafts survive a rescan.
+- Edits are always visible (D-026): the list shows `✎ +2 −1` (lines added/removed vs the
+  original), the Info tab says so, the Source tab marks added lines `+` on green and
+  shows removed lines crossed out on red with `-`; the run confirmation, the run header
+  (`✎ edited +2 −1`) and its log say the run is of the edited version, and an export
+  lists the changes at the end.
 - Terminal min size 80×24; below that render a "terminal too small" message only.
 - Mouse: not required in v1.
 

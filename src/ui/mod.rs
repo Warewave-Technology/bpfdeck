@@ -328,6 +328,31 @@ mod tests {
     }
 
     #[test]
+    fn inline_edit_changes_120x40() {
+        let mut app = ready();
+        keys(&mut app, &[KeyCode::Char('/')]);
+        type_text(&mut app, "sysc");
+        keys(&mut app, &[KeyCode::Enter, KeyCode::Char('i')]);
+        // Change line 9, add a line after it, delete line 5.
+        for _ in 0..8 {
+            keys(&mut app, &[KeyCode::Down]);
+        }
+        keys(&mut app, &[KeyCode::End]);
+        type_text(&mut app, " // per process");
+        keys(&mut app, &[KeyCode::Enter]);
+        type_text(&mut app, "@total = count();");
+        for _ in 0..5 {
+            keys(&mut app, &[KeyCode::Up]);
+        }
+        keys(&mut app, &[KeyCode::Home]);
+        for _ in 0..27 {
+            keys(&mut app, &[KeyCode::Delete]);
+        }
+        keys(&mut app, &[KeyCode::Esc, KeyCode::Char('2')]);
+        insta::assert_snapshot!(render(&app, 120, 40));
+    }
+
+    #[test]
     fn disconnect_hint_on_remote_tabs() {
         let mut app = ready();
         let bar = |app: &App| {

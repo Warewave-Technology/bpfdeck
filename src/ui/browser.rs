@@ -165,11 +165,10 @@ fn list_row(
         Span::styled(dir, Theme::muted()),
         Span::raw(name),
     ];
-    if let Some(d) = &entry.draft {
-        spans.push(Span::styled(
-            " ✎",
-            if d.active { Theme::accent() } else { Theme::muted() },
-        ));
+    match &entry.draft {
+        Some(d) if d.active => spans.push(Span::styled(format!(" ✎ {}", d.diff.summary()), Theme::accent())),
+        Some(_) => spans.push(Span::styled(" ✎", Theme::muted())),
+        None => {}
     }
     if let Some(desc) = &entry.shown().meta.description {
         spans.push(Span::styled(format!("  {desc}"), Theme::muted()));
@@ -257,7 +256,10 @@ pub fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
             }
             return;
         }
-        1 => (source_view::lines(&entry.shown().content), false),
+        1 => match &entry.draft {
+            Some(d) if d.active => (source_view::diff_lines(&d.diff, &d.script.content), false),
+            _ => (source_view::lines(&entry.shown().content), false),
+        },
         _ => (validation_lines(app, entry), true),
     };
 
@@ -356,7 +358,11 @@ fn info_lines(entry: &Entry, app: &App) -> Vec<Line<'static>> {
         Some(d) if d.active => lines.push(field(
             "Edited",
             vec![Span::styled(
-                "✎ runs use your version, the file is unchanged (u: original)",
+                format!(
+                    "✎ {} lines vs the original, marked in Source; runs use this version \
+                     (u: original)",
+                    d.diff.summary()
+                ),
                 Theme::accent(),
             )],
         )),

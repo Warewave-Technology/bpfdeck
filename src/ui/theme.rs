@@ -21,6 +21,9 @@ pub const BLUE: Color = Color::Rgb(0x83, 0xa5, 0x98);
 pub const PURPLE: Color = Color::Rgb(0xd3, 0x86, 0x9b);
 pub const AQUA: Color = Color::Rgb(0x8e, 0xc0, 0x7c);
 pub const ORANGE: Color = Color::Rgb(0xfe, 0x80, 0x19);
+/// Gruvbox-toned dark backgrounds for changed lines.
+pub const ADDED_BG: Color = Color::Rgb(0x32, 0x36, 0x1a);
+pub const REMOVED_BG: Color = Color::Rgb(0x3c, 0x1f, 0x1e);
 
 /// Semantic roles. Widgets use these, not raw colors.
 pub struct Theme;
@@ -70,6 +73,23 @@ impl Theme {
     }
     pub fn accent() -> Style {
         Style::new().fg(PURPLE)
+    }
+    /// A line the user added in an inline edit (background only, keeps highlighting).
+    pub fn diff_added_line() -> Style {
+        Style::new().bg(ADDED_BG)
+    }
+    pub fn diff_added_marker() -> Style {
+        Style::new().fg(GREEN).bg(ADDED_BG).add_modifier(Modifier::BOLD)
+    }
+    /// A line of the original that the edit removed.
+    pub fn diff_removed_line() -> Style {
+        Style::new()
+            .fg(FG4)
+            .bg(REMOVED_BG)
+            .add_modifier(Modifier::CROSSED_OUT)
+    }
+    pub fn diff_removed_marker() -> Style {
+        Style::new().fg(RED).bg(REMOVED_BG).add_modifier(Modifier::BOLD)
     }
     pub fn popup_bg() -> Style {
         Style::new().fg(FG).bg(BG0_H)

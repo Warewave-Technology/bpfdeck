@@ -189,7 +189,13 @@ fn path_spans(app: &App, confirm: &Confirm) -> Vec<Span<'static>> {
     match original {
         Some(e) if confirm.edited => vec![
             Span::raw(e.script.file.path.display().to_string()),
-            Span::styled("  ✎ your edited version", Theme::accent()),
+            Span::styled(
+                format!(
+                    "  ✎ your edited version ({} lines)",
+                    e.draft.as_ref().map(|d| d.diff.summary()).unwrap_or_default()
+                ),
+                Theme::accent(),
+            ),
         ],
         _ => vec![Span::raw(confirm.path.display().to_string())],
     }

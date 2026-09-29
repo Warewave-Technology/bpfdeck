@@ -1,5 +1,6 @@
 //! Source tab: line numbers + light, hand-written syntax highlighting (spec §5.1).
 
+use crate::model::diff::{Diff, DiffLine};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
@@ -212,6 +213,43 @@ pub fn lines(src: &str) -> Vec<Line<'_>> {
             Line::from(spans)
         })
         .collect()
+}
+
+/// The draft with its changes against the original (D-026): added lines on a green
+/// background with `+`, removed lines crossed out on red with `-` (no line number: they
+/// are not in the draft), unchanged lines as in [`lines`].
+pub fn diff_lines<'a>(diff: &Diff, draft: &'a str) -> Vec<Line<'a>> {
+    let mut highlighted = lines(draft).into_iter();
+    let width = draft.lines().count().max(1).to_string().len();
+    let mut out = Vec::with_capacity(diff.lines.len());
+    for line in &diff.lines {
+        match line {
+            DiffLine::Same(_) => {
+                let mut l = highlighted.next().unwrap_or_default();
+                l.spans.insert(0, Span::raw("  "));
+                out.push(l);
+            }
+            DiffLine::Added(_) => {
+                let l = highlighted.next().unwrap_or_default();
+                let mut spans = vec![Span::styled("+ ", Theme::diff_added_marker())];
+                spans.extend(
+                    l.spans
+                        .into_iter()
+                        .map(|s| s.patch_style(Theme::diff_added_line())),
+                );
+                out.push(Line::from(spans).style(Theme::diff_added_line()));
+            }
+            DiffLine::Removed(text) => out.push(
+                Line::from(vec![
+                    Span::styled("- ", Theme::diff_removed_marker()),
+                    Span::styled(format!("{:>width$} ", ""), Theme::diff_removed_line()),
+                    Span::styled(text.replace('\t', "    "), Theme::diff_removed_line()),
+                ])
+                .style(Theme::diff_removed_line()),
+            ),
+        }
+    }
+    out
 }
 
 #[cfg(test)]

@@ -281,11 +281,23 @@ impl App {
                 return Vec::new();
             }
         };
-        let (script_id, script) = (confirm.script_id.clone(), confirm.path.clone());
+        let (script_id, script, edited) = (confirm.script_id.clone(), confirm.path.clone(), confirm.edited);
+        let edits = edited
+            .then(|| self.entries.iter().find(|e| e.id() == script_id))
+            .flatten()
+            .and_then(|e| e.draft.as_ref().map(|d| d.diff.clone()));
         self.next_run_id += 1;
         let run_id = self.next_run_id;
         let t = self.target_mut();
-        t.run = Some(Run::new(run_id, &script_id, &command::display(&argv)));
+        let mut run = Run::new(run_id, &script_id, &command::display(&argv));
+        if let Some(diff) = &edits {
+            run.log.push_line(
+                LogKind::System,
+                &format!("✎ edited script ({} lines vs the source file)", diff.summary()),
+            );
+        }
+        run.edits = edits;
+        t.run = Some(run);
         t.log_view = LogView::following();
         self.overlay = None;
         self.screen = Screen::Run;

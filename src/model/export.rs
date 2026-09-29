@@ -39,6 +39,13 @@ pub fn render_text(run: &Run, host: Option<&str>, raw_note: Option<&str>) -> Str
     if let Some(note) = raw_note {
         let _ = writeln!(out, "note:     {note}");
     }
+    if let Some(edits) = &run.edits {
+        let _ = writeln!(
+            out,
+            "edited:   yes, {} lines vs the source file (changes at the end)",
+            edits.summary()
+        );
+    }
 
     for panel in &run.panels.list {
         out.push('\n');
@@ -54,6 +61,12 @@ pub fn render_text(run: &Run, host: Option<&str>, raw_note: Option<&str>) -> Str
     for line in lines {
         out.push_str(&line.display());
         out.push('\n');
+    }
+    if let Some(edits) = &run.edits {
+        let _ = writeln!(out, "\n--- changes vs the source file ({}) ---", edits.summary());
+        for change in edits.changes() {
+            let _ = writeln!(out, "{change}");
+        }
     }
     out
 }
@@ -224,6 +237,17 @@ mod tests {
             t0 + Duration::from_secs(75),
         );
         insta::assert_snapshot!(render_text(&run, None, Some("raw NDJSON truncated at 256 MiB")));
+        run.edits = Some(crate::model::diff::diff("a\nb\n", "a\nx\n"));
+        let edited = render_text(&run, None, None);
+        assert!(
+            edited.contains("edited:   yes, +1 −1 lines vs the source file"),
+            "{edited}"
+        );
+        assert!(
+            edited.ends_with("--- changes vs the source file (+1 −1) ---\n-   2 b\n+   2 x\n"),
+            "{edited}"
+        );
+        run.edits = None;
         let remote = render_text(&run, Some("ops@db-02"), None);
         assert!(
             remote.starts_with("bpfdeck run export\nhost:     ops@db-02\nscript:   "),

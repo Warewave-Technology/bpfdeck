@@ -465,9 +465,13 @@ impl App {
             .scripts
             .into_iter()
             .map(|script| {
-                let draft = drafts.remove(&script.file.id).map(|mut d| {
-                    d.script = Script::new(script.file.clone(), d.script.content);
-                    d
+                let draft = drafts.remove(&script.file.id).map(|d| {
+                    // Same text and copy; the diff is against the freshly scanned original.
+                    Draft {
+                        path: d.path,
+                        active: d.active,
+                        ..Draft::new(&script, d.script.content)
+                    }
                 });
                 let mut entry = Entry {
                     request: ValidationRequest::new(&script.file.path, &script.content, &script.meta),

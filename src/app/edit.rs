@@ -11,6 +11,7 @@ use super::{App, Level, Screen};
 use crate::bpftrace::validate::ValidationRequest;
 use crate::catalog::Script;
 use crate::keymap::Action;
+use crate::model::diff::{Diff, diff};
 use crate::model::editor::TextBuffer;
 use crate::msg::Cmd;
 
@@ -29,6 +30,23 @@ pub struct Draft {
     pub path: Option<PathBuf>,
     /// Shown, validated and run instead of the original.
     pub active: bool,
+    /// Changes vs the original.
+    pub diff: Diff,
+}
+
+impl Draft {
+    /// A new active draft of `original` with `text`.
+    pub fn new(original: &Script, text: String) -> Self {
+        let script = Script::new(original.file.clone(), text);
+        let hash = ValidationRequest::new(&script.file.path, &script.content, &script.meta).content_hash;
+        Self {
+            diff: diff(&original.content, &script.content),
+            script,
+            hash,
+            path: None,
+            active: true,
+        }
+    }
 }
 
 /// The editor on the Source tab. `top`/`left` are the scroll offsets, kept by the renderer
@@ -124,19 +142,15 @@ impl App {
             self.notify(Level::Info, format!("{}: same as the original again", ed.id));
             return self.revalidate(i);
         }
-        let script = Script::new(entry.script.file.clone(), text.clone());
-        let hash = ValidationRequest::new(&script.file.path, &script.content, &script.meta).content_hash;
-        entry.draft = Some(Draft {
-            script,
-            hash: hash.clone(),
-            path: None,
-            active: true,
-        });
+        let draft = Draft::new(&entry.script, text.clone());
+        let hash = draft.hash.clone();
+        let summary = draft.diff.summary();
+        entry.draft = Some(draft);
         let cmds = self.revalidate(i);
         self.notify(
             Level::Info,
             format!(
-                "{}: edited; validation and runs use your version (u: original)",
+                "{}: edited ({summary} lines); validation and runs use it (u: original)",
                 ed.id
             ),
         );
@@ -287,6 +301,18 @@ mod tests {
                 if request.path == std::path::Path::new("/tmp/drafts/1-syscount_demo.bt") && request.content_hash == hash),
             "{cmds:?}"
         );
+
+        // A run of the edited version says so.
+        press(&mut app, KeyCode::Enter);
+        let cmds = press(&mut app, KeyCode::Enter);
+        assert!(
+            matches!(cmds.as_slice(), [Cmd::StartRun { script, .. }] if script == std::path::Path::new("/tmp/drafts/1-syscount_demo.bt")),
+            "{cmds:?}"
+        );
+        let run = app.target().run.as_ref().expect("run");
+        assert_eq!(run.edits.as_ref().map(|d| d.summary()), Some("+1 −0".to_string()));
+        assert!(run.log.matching("").iter().any(|l| l.text.contains("✎ edited script (+1 −0 lines")));
+        press(&mut app, KeyCode::Esc);
 
         // u: original (validated from its own file), u again: the edits are back.
         let cmds = press(&mut app, KeyCode::Char('u'));

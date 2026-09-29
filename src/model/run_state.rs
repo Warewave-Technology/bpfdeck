@@ -1,6 +1,7 @@
 //! One bpftrace run as the UI sees it (spec §5.4): phase, counters, log, panels.
 //! Time is passed in by the caller so everything here is deterministic.
 
+use super::diff::Diff;
 use std::time::{Duration, Instant};
 
 use super::describe::describe;
@@ -66,6 +67,8 @@ pub struct Run {
     pub log: LogBuffer,
     /// Latest message per map name; each new print replaces the previous snapshot.
     pub panels: Panels,
+    /// The run is of an inline-edited script: its changes vs the source file (D-025).
+    pub edits: Option<Diff>,
 }
 
 impl Run {
@@ -86,6 +89,7 @@ impl Run {
             dropped: 0,
             log,
             panels: Panels::default(),
+            edits: None,
         }
     }
 

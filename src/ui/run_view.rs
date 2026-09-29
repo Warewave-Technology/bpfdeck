@@ -72,6 +72,13 @@ fn header_lines(run: &Run) -> Vec<Line<'static>> {
     let first = Line::from(vec![
         Span::styled(format!("{glyph} "), style),
         Span::styled(run.script_id.clone(), Theme::title()),
+        Span::styled(
+            run.edits
+                .as_ref()
+                .map(|d| format!(" ✎ edited {}", d.summary()))
+                .unwrap_or_default(),
+            Theme::accent(),
+        ),
         Span::styled(format!("  {}", run.state_label()), style),
         Span::styled(format!("  {}", elapsed(run.elapsed)), Theme::base()),
     ]);

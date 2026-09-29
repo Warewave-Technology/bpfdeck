@@ -148,3 +148,10 @@ drops the draft. bpftrace reads the draft from a private copy the executor write
 (the app does no I/O); the copy is validated and run like any script, cached by its
 content hash, and removed on exit. A small hand-written buffer (`model/editor.rs`) instead
 of a new crate: no dependency to approve, and scripts are small. — accepted
+
+**D-026 — Inline edits are always visible, down to the line.** Owner's request
+(2026-09-29): a draft must never be mistaken for the original. A small LCS line diff
+(`model/diff.rs`, pure) against the original drives every place a script or run shows
+up: `✎ +a −r` in the list, the Info tab, `+`/`-` lines in the Source tab, the run
+confirmation, the run header and log, and a "changes vs the source file" section in
+exports, so a report says exactly what ran. — accepted
