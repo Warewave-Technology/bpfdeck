@@ -16,6 +16,7 @@ use crate::bpftrace::validate::{self, Strategy, ValidationRequest, Validator};
 use crate::catalog::{self, Catalog, Script};
 use crate::list::{self, Row};
 use crate::model::describe::describe;
+use crate::remote::session::Backend;
 use crate::{bpftrace, source, sys};
 
 /// Load the catalog and print its warnings to stderr.
@@ -84,6 +85,7 @@ async fn validate_all(bpftrace_path: &Path, scripts: &[Script]) -> Vec<Option<va
         eprintln!("warning: kernel lockdown is active; bpftrace cannot load programs on this host");
     }
     let validator = Arc::new(Validator::new(
+        Backend::Local,
         &info,
         &host.kernel_release,
         strategy,

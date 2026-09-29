@@ -12,8 +12,9 @@ use std::time::Duration;
 use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
 
-use super::{BpftraceInfo, CaptureError, capture, command};
+use super::{BpftraceInfo, CaptureError, command};
 use crate::discovery::metadata::Metadata;
+use crate::remote::session::Backend;
 use crate::sys::Privilege;
 
 pub const DEFAULT_WORKERS: usize = 4;
@@ -104,6 +105,7 @@ struct CacheKey {
 }
 
 pub struct Validator {
+    backend: Backend,
     bpftrace: PathBuf,
     bpftrace_version: String,
     kernel_release: String,
@@ -116,6 +118,7 @@ pub struct Validator {
 
 impl Validator {
     pub fn new(
+        backend: Backend,
         info: &BpftraceInfo,
         kernel_release: &str,
         strategy: Strategy,
@@ -123,6 +126,7 @@ impl Validator {
         timeout: Duration,
     ) -> Self {
         Self {
+            backend,
             bpftrace: info.path.clone(),
             bpftrace_version: info.version_raw.clone(),
             kernel_release: kernel_release.to_string(),
@@ -160,7 +164,8 @@ impl Validator {
     }
 
     async fn dry_run(&self, req: &ValidationRequest) -> Validation {
-        let argv = command::dry_run_argv(&self.bpftrace, &req.path, req.positional_count);
+        let script = self.backend.script_arg(&req.path);
+        let argv = command::dry_run_argv(&self.bpftrace, script, req.positional_count);
         let mut notes = Vec::new();
         if req.positional_count > 0 {
             notes.push(format!(
@@ -168,7 +173,7 @@ impl Validator {
                 req.positional_count
             ));
         }
-        let out = match capture(&argv, self.timeout).await {
+        let out = match self.backend.capture(&argv, Some(&req.path), self.timeout).await {
             Ok(out) => out,
             Err(e) => return self.transient(e, notes),
         };
@@ -201,7 +206,7 @@ impl Validator {
                 Some(found) => found,
                 None => {
                     let argv = command::probe_list_argv(&self.bpftrace, probe);
-                    let out = match capture(&argv, self.timeout).await {
+                    let out = match self.backend.capture(&argv, None, self.timeout).await {
                         Ok(out) => out,
                         Err(e) => return self.transient(e, notes),
                     };
@@ -251,6 +256,7 @@ impl Validator {
             CaptureError::Spawn(e) | CaptureError::Io(e) => {
                 format!("cannot run {}: {e}", self.bpftrace.display())
             }
+            CaptureError::Remote(e) => e,
         };
         notes.push(format!("{TRANSIENT} {reason}"));
         failed(self.strategy, reason).with_notes(notes)
@@ -313,7 +319,14 @@ mod tests {
 
     async fn validator(fake: &Path, strategy: Strategy, timeout: Duration) -> Validator {
         let info = super::super::detect(fake).await.expect("detect");
-        Validator::new(&info, "6.1.0-test", strategy, DEFAULT_WORKERS, timeout)
+        Validator::new(
+            Backend::Local,
+            &info,
+            "6.1.0-test",
+            strategy,
+            DEFAULT_WORKERS,
+            timeout,
+        )
     }
 
     fn request(path: &Path) -> ValidationRequest {
@@ -333,6 +346,30 @@ mod tests {
         assert_eq!(Strategy::choose(&new, Privilege::Caps), Strategy::DryRun);
         assert_eq!(Strategy::choose(&new, Privilege::None), Strategy::ProbeList);
         assert_eq!(Strategy::choose(&old, Privilege::Root), Strategy::ProbeList);
+    }
+
+    #[tokio::test]
+    async fn remote_dry_run_copies_the_script_to_the_host() {
+        use crate::remote::session::{Sudo, testutil};
+        let info = super::super::detect(&fake()).await.expect("detect");
+        let backend = Backend::Ssh(std::sync::Arc::new(testutil::target("host", Sudo::NoPassword)));
+        let v = Validator::new(
+            backend,
+            &info,
+            "6.1.0-test",
+            Strategy::DryRun,
+            DEFAULT_WORKERS,
+            DEFAULT_TIMEOUT,
+        );
+        assert_eq!(
+            v.validate(&fixture("syscount_demo.bt")).await.verdict,
+            Verdict::Ok
+        );
+        let missing = v.validate(&fixture("missing_probe_demo.bt")).await;
+        assert!(
+            matches!(&missing.verdict, Verdict::Failed { reason } if reason.contains("does_not_exist_bpfdeck")),
+            "{missing:?}"
+        );
     }
 
     #[tokio::test]

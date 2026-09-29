@@ -1,0 +1,28 @@
+#!/bin/sh
+# Fake sudo (see fake-ssh.sh): runs the command as the current user. -n fails when a
+# password is required (FAKE_SUDO_PASSWORD=1); -S reads password lines, "secret" is right.
+S=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -n) shift ;;
+    -S) S=1; shift ;;
+    -p) shift 2 ;;
+    --) shift; break ;;
+    *) break ;;
+  esac
+done
+if [ "$S" = 1 ]; then
+  tries=0
+  while IFS= read -r pw; do
+    [ "$pw" = secret ] && exec "$@"
+    tries=$((tries + 1))
+    echo "Sorry, try again." >&2
+    [ "$tries" -ge 3 ] && { echo "sudo: 3 incorrect password attempts" >&2; exit 1; }
+  done
+  exit 1
+fi
+if [ "${FAKE_SUDO_PASSWORD:-}" = 1 ]; then
+  echo "sudo: a password is required" >&2
+  exit 1
+fi
+exec "$@"

@@ -17,6 +17,7 @@ use crate::model::export;
 use crate::model::form::ParamForm;
 use crate::model::run_state::{ExitInfo, Run};
 use crate::msg::Cmd;
+use crate::remote::REMOTE_SCRIPT;
 
 /// Everything the confirmation dialog shows and needs to build the command line.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,7 +58,6 @@ impl Confirm {
 }
 
 /// Name of the script inside the remote runner's temp dir.
-pub const REMOTE_SCRIPT: &str = "script.bt";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ask {

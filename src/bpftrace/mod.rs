@@ -67,6 +67,10 @@ pub async fn detect(path: &Path) -> Result<BpftraceInfo, DetectError> {
         CaptureError::Timeout => DetectError::Timeout {
             path: path.to_path_buf(),
         },
+        CaptureError::Remote(output) => DetectError::Failed {
+            path: path.to_path_buf(),
+            output,
+        },
     };
     let version = capture(&command::version_argv(path), DETECT_TIMEOUT)
         .await
@@ -131,6 +135,8 @@ pub(crate) enum CaptureError {
     Spawn(io::Error),
     Io(io::Error),
     Timeout,
+    /// The SSH session could not be set up (connection, sudo, handshake).
+    Remote(String),
 }
 
 /// Run `argv` (no shell) in its own process group and collect its output. On timeout

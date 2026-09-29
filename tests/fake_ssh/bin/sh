@@ -1,0 +1,11 @@
+#!/bin/sh
+# The remote host's `sh`. Real hosts run real bpftrace, which installs its own SIGINT
+# handler. The fake bpftrace is a shell script: it can only trap SIGINT if the runner
+# un-ignored it for its background job, which zsh and bash 5 allow (dash and bash 3.2
+# do not), so prefer those here.
+if command -v zsh > /dev/null 2>&1; then
+  exec zsh --emulate sh "$@"
+elif command -v bash > /dev/null 2>&1 && [ "$(bash -c 'echo ${BASH_VERSINFO[0]}')" -ge 5 ]; then
+  exec bash --posix "$@"
+fi
+exec /bin/sh "$@"

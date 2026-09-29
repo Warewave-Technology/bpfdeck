@@ -16,8 +16,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use nix::sys::signal::Signal;
-use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
-use tokio::process::{Child, Command};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
@@ -159,7 +159,64 @@ pub fn spawn(
     let pgid = child
         .id()
         .ok_or_else(|| io::Error::other("child exited before its pid was read"))?;
+    let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        return Err(io::Error::other("child pipes missing"));
+    };
+    Ok(start(
+        Started {
+            child,
+            pgid,
+            stdout: Box::new(stdout),
+            stderr: Box::new(stderr),
+            stop: StopMode::SignalGroup,
+            remote: false,
+        },
+        tx,
+        escalation,
+        spool,
+    ))
+}
 
+/// How a graceful stop is requested.
+pub enum StopMode {
+    /// SIGINT → SIGTERM → SIGKILL to the local process group (a local bpftrace).
+    SignalGroup,
+    /// Write a line to the child's stdin; the remote runner escalates by itself
+    /// (docs/design-remote.md). Held for the whole run: closing it also means "stop".
+    StdinLine(ChildStdin),
+}
+
+/// A spawned process whose output is bpftrace's (locally, or through `ssh` once the
+/// remote handshake is done).
+pub struct Started {
+    pub child: Child,
+    pub pgid: u32,
+    pub stdout: Box<dyn AsyncRead + Unpin + Send>,
+    pub stderr: Box<dyn AsyncRead + Unpin + Send>,
+    pub stop: StopMode,
+    /// The exit status is the remote shell's: 128+N means "killed by signal N".
+    pub remote: bool,
+}
+
+/// After a stop line, how long the remote side gets (its own INT→TERM→KILL takes 7 s)
+/// before the local `ssh` is killed, which ends the session and stops it anyway (EOF).
+const REMOTE_STOP_GRACE: Duration = Duration::from_secs(3);
+
+/// Stream a started process: parse stdout, forward stderr, spool, stop, report the exit.
+pub fn start(
+    started: Started,
+    tx: mpsc::Sender<RunEvent>,
+    escalation: Escalation,
+    spool: Option<&Spool>,
+) -> RunHandle {
+    let Started {
+        child,
+        pgid,
+        stdout,
+        stderr,
+        stop,
+        remote,
+    } = started;
     let spool_truncated = Arc::new(AtomicBool::new(false));
     let spool = spool.and_then(|s| {
         let file = File::create(&s.path).ok()?;
@@ -170,66 +227,93 @@ pub fn spawn(
             truncated: spool_truncated.clone(),
         })
     });
-    let readers = [
-        child.stdout.take().map(|out| {
-            tokio::spawn(read_lines(out, tx.clone(), spool, |line| {
-                json::parse_line(&line)
-                    .into_iter()
-                    .map(RunEvent::Output)
-                    .collect()
-            }))
-        }),
-        child.stderr.take().map(|err| {
-            tokio::spawn(read_lines(err, tx.clone(), None, |line| {
-                if line.trim().is_empty() {
-                    Vec::new()
-                } else {
-                    vec![RunEvent::Stderr(line)]
-                }
-            }))
-        }),
+    let readers = vec![
+        tokio::spawn(read_lines(stdout, tx.clone(), spool, |line| {
+            json::parse_line(&line)
+                .into_iter()
+                .map(RunEvent::Output)
+                .collect()
+        })),
+        tokio::spawn(read_lines(stderr, tx.clone(), None, |line| {
+            if line.trim().is_empty() {
+                Vec::new()
+            } else {
+                vec![RunEvent::Stderr(line)]
+            }
+        })),
     ];
 
     let (stop_tx, stop_rx) = oneshot::channel();
     let finished = Arc::new(AtomicBool::new(false));
     tokio::spawn(supervise(
         child,
-        pgid,
+        Stopper {
+            pgid,
+            mode: stop,
+            escalation,
+            remote,
+        },
         stop_rx,
-        escalation,
-        readers.into_iter().flatten().collect(),
+        readers,
         tx,
         finished.clone(),
     ));
-    Ok(RunHandle {
+    RunHandle {
         pgid,
         stop: Some(stop_tx),
         finished,
         spool_truncated,
-    })
+    }
+}
+
+struct Stopper {
+    pgid: u32,
+    mode: StopMode,
+    escalation: Escalation,
+    remote: bool,
 }
 
 async fn supervise(
     mut child: Child,
-    pgid: u32,
+    mut stopper: Stopper,
     mut stop_rx: oneshot::Receiver<()>,
-    escalation: Escalation,
     readers: Vec<JoinHandle<()>>,
     tx: mpsc::Sender<RunEvent>,
     finished: Arc<AtomicBool>,
 ) {
+    let pgid = stopper.pgid;
     let mut forced = None;
     let status = tokio::select! {
         status = child.wait() => status,
         stop = &mut stop_rx => {
             if stop.is_ok() {
-                stop_gracefully(&mut child, pgid, escalation, &mut forced).await
+                match &mut stopper.mode {
+                    StopMode::SignalGroup => {
+                        stop_gracefully(&mut child, pgid, stopper.escalation, &mut forced).await
+                    }
+                    StopMode::StdinLine(stdin) => {
+                        let _ = stdin.write_all(b"stop\n").await;
+                        let _ = stdin.flush().await;
+                        let e = stopper.escalation;
+                        let budget = e.after_int + e.after_term + REMOTE_STOP_GRACE;
+                        match tokio::time::timeout(budget, child.wait()).await {
+                            Ok(status) => status,
+                            Err(_) => {
+                                forced = Some(Signal::SIGKILL);
+                                signal_group(pgid, Signal::SIGKILL);
+                                child.wait().await
+                            }
+                        }
+                    }
+                }
             } else {
                 // Handle dropped: its Drop already sent SIGKILL.
                 child.wait().await
             }
         }
     };
+    // The stop line's stdin (remote) stays open until here: closing it means "stop".
+    drop(stopper.mode);
     finished.store(true, Ordering::Release);
     // bpftrace is gone; take down anything it left in its group (e.g. `-c` commands,
     // `system()` children) so they don't hold the pipes open.
@@ -240,7 +324,30 @@ async fn supervise(
             reader.abort();
         }
     }
-    let _ = tx.send(RunEvent::Exited(exit_of(status, forced))).await;
+    let mut exit = exit_of(status, forced);
+    if stopper.remote {
+        remote_exit(&mut exit);
+    }
+    let _ = tx.send(RunEvent::Exited(exit)).await;
+}
+
+/// The remote shell exits with 128+N when bpftrace was killed by signal N; report it
+/// like a local signal death, and SIGTERM/SIGKILL as escalations of our stop.
+fn remote_exit(exit: &mut RunExit) {
+    if let Some(code) = exit.code
+        && (129..160).contains(&code)
+    {
+        let sig = code - 128;
+        exit.code = None;
+        exit.signal = Some(sig);
+        if exit.forced.is_none() {
+            exit.forced = match sig {
+                15 => Some(Signal::SIGTERM),
+                9 => Some(Signal::SIGKILL),
+                _ => None,
+            };
+        }
+    }
 }
 
 async fn stop_gracefully(

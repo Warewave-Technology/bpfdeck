@@ -24,6 +24,7 @@ use crate::bpftrace::runner::{self, Escalation, RunEvent, RunHandle};
 use crate::bpftrace::validate::{self, Strategy, Validator};
 use crate::model::log;
 use crate::msg::{Cmd, Msg};
+use crate::remote::session::Backend;
 use crate::{bpftrace, catalog, source, sys, ui};
 
 const CHANNEL_CAPACITY: usize = 1024;
@@ -239,6 +240,7 @@ impl Executor {
                         Ok(info) => {
                             let strategy = Strategy::choose(&info, host.privilege);
                             let validator = Validator::new(
+                                Backend::Local,
                                 &info,
                                 &host.kernel_release,
                                 strategy,
