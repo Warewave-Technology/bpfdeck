@@ -57,6 +57,10 @@ impl Target {
         }
     }
 
+    pub fn lost(&self) -> bool {
+        matches!(self.conn, Conn::Lost(_))
+    }
+
     pub fn is_remote(&self) -> bool {
         matches!(self.kind, TargetKind::Ssh(_))
     }

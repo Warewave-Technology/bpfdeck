@@ -1,7 +1,7 @@
 ---
 source: src/model/export.rs
 assertion_line: 178
-expression: "render_text(&run, Some(\"raw NDJSON truncated at 256 MiB\"))"
+expression: "render_text(&run, None, Some(\"raw NDJSON truncated at 256 MiB\"))"
 ---
 bpfdeck run export
 script:   vfs_latency_demo.bt

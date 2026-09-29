@@ -355,6 +355,10 @@ impl App {
                 self.on_connect_failed(attempt, reason);
                 Vec::new()
             }
+            Msg::ConnectionLost { target, reason } => {
+                self.on_connection_lost(target, reason);
+                Vec::new()
+            }
             Msg::Connected {
                 attempt,
                 target,

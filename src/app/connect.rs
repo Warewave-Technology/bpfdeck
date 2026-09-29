@@ -2,8 +2,8 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::target::{LOCAL, Target, TargetId, TargetKind};
-use super::{App, Level, Overlay, Screen};
+use super::target::{Conn, LOCAL, Target, TargetId, TargetKind};
+use super::{App, Level, Overlay, Screen, ValidationState};
 use crate::bpftrace::BpftraceInfo;
 use crate::bpftrace::validate::Strategy;
 use crate::keymap::Action;
@@ -147,8 +147,18 @@ impl App {
         }
     }
 
+    /// On a tab whose connection was lost, the form starts with that host (reconnect).
     pub(super) fn open_connect(&mut self) {
-        self.overlay = Some(Overlay::Connect(ConnectForm::new()));
+        let mut form = ConnectForm::new();
+        let t = self.target();
+        if let (true, TargetKind::Ssh(dest)) = (t.lost(), &t.kind) {
+            form.host = match &dest.user {
+                Some(user) => format!("{user}@{}", dest.host),
+                None => dest.host.clone(),
+            };
+            form.port = dest.port.map(|p| p.to_string()).unwrap_or_default();
+        }
+        self.overlay = Some(Overlay::Connect(form));
     }
 
     /// Typing into the connect dialog (unbound keys).
@@ -203,7 +213,13 @@ impl App {
     }
 
     fn submit_connect(&mut self, interactive: bool) -> Vec<Cmd> {
-        let labels: Vec<String> = self.targets.iter().map(|t| t.label.clone()).collect();
+        // A lost target may be connected again; its tab is then replaced.
+        let labels: Vec<String> = self
+            .targets
+            .iter()
+            .filter(|t| !t.lost())
+            .map(|t| t.label.clone())
+            .collect();
         let attempt = self.next_attempt;
         let target = self.next_target_id;
         let Some(form) = self.connect_form() else {
@@ -311,11 +327,25 @@ impl App {
         let privilege = info.privilege.clone();
         let mut target = Target::new(id, label.clone(), TargetKind::Ssh(dest));
         target.remote = Some(info);
-        self.targets.push(target);
-        self.active = self.targets.len() - 1;
+        let mut cmds = Vec::new();
+        match self.targets.iter().position(|t| t.lost() && t.label == label) {
+            Some(i) => {
+                let old = self.targets[i].id;
+                for entry in &mut self.entries {
+                    entry.validations.remove(&old);
+                }
+                self.targets[i] = target;
+                self.active = i;
+                cmds.push(Cmd::Disconnect { target: old });
+            }
+            None => {
+                self.targets.push(target);
+                self.active = self.targets.len() - 1;
+            }
+        }
         self.screen = Screen::Browser;
         self.scroll.set(0);
-        let cmds = self.on_env(id, host, Ok(bpftrace));
+        cmds.extend(self.on_env(id, host, Ok(bpftrace)));
         self.notify(
             Level::Info,
             format!(
@@ -324,6 +354,25 @@ impl App {
             ),
         );
         cmds
+    }
+
+    pub(super) fn on_connection_lost(&mut self, id: TargetId, reason: String) {
+        let Some(t) = self.target_by_id(id) else {
+            return;
+        };
+        t.conn = Conn::Lost(reason.clone());
+        let label = t.label.clone();
+        for entry in &mut self.entries {
+            if entry.validation(id) == &ValidationState::Pending {
+                entry
+                    .validations
+                    .insert(id, ValidationState::Skipped("connection lost".into()));
+            }
+        }
+        self.notify(
+            Level::Error,
+            format!("{label}: connection lost ({reason}); c reconnects, d closes the tab"),
+        );
     }
 
     /// `d`: close the active target's connection (asks first if a run is active there).
@@ -554,6 +603,59 @@ mod tests {
         });
         assert_eq!(late, vec![Cmd::Disconnect { target: 3 }]);
         assert_eq!(app.targets.len(), 1);
+    }
+
+    #[test]
+    fn lost_connection_and_reconnect() {
+        let mut app = ready();
+        connect(&mut app, "ops@db-02");
+        app.update(Msg::ConnectionLost {
+            target: 1,
+            reason: "the ssh connection closed".into(),
+        });
+        assert!(app.target().lost() && !app.target().usable());
+        assert!(
+            app.notice
+                .as_ref()
+                .is_some_and(|n| n.text.contains("connection lost"))
+        );
+        // Enter explains instead of running.
+        press(&mut app, KeyCode::Char('G'));
+        assert!(press(&mut app, KeyCode::Enter).is_empty());
+        assert!(
+            app.notice
+                .as_ref()
+                .is_some_and(|n| n.text.contains("press c to reconnect"))
+        );
+
+        // c starts with that host; connecting again replaces the tab in place.
+        press(&mut app, KeyCode::Char('c'));
+        assert_eq!(form(&app).host, "ops@db-02");
+        let attempt = match press(&mut app, KeyCode::Enter).as_slice() {
+            [
+                Cmd::Connect {
+                    attempt, target: 2, ..
+                },
+            ] => *attempt,
+            other => panic!("{other:?}"),
+        };
+        let cmds = app.update(Msg::Connected {
+            attempt,
+            target: 2,
+            dest: Dest::parse("ops@db-02", "").expect("dest"),
+            info: RemoteInfo::default(),
+            host: host(Privilege::Root, Lockdown::None),
+            bpftrace: bpftrace(),
+        });
+        assert_eq!(app.targets.len(), 2);
+        assert_eq!((app.active, app.target().id, app.target().lost()), (1, 2, false));
+        assert_eq!(cmds[0], Cmd::Disconnect { target: 1 });
+        assert!(
+            cmds[1..]
+                .iter()
+                .all(|c| matches!(c, Cmd::Validate { target: 2, .. }))
+        );
+        assert!(app.entries.iter().all(|e| !e.validations.contains_key(&1)));
     }
 
     #[test]

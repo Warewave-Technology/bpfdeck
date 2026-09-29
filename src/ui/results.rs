@@ -59,7 +59,8 @@ fn tab_bar(app: &App) -> Line<'static> {
 }
 
 /// `root via sudo · 5.14.0-427… · Rocky Linux 9.4` for the right side of the title.
-fn target_summary(t: &Target) -> String {
+/// Fits into `width` columns by dropping parts from the end (the tabs come first).
+fn target_summary(t: &Target, width: usize) -> String {
     let mut parts = Vec::new();
     match (&t.remote, &t.host) {
         (Some(r), _) => parts.push(r.privilege.clone()),
@@ -80,7 +81,19 @@ fn target_summary(t: &Target) -> String {
         parts.push(r.os.clone());
     }
     parts.retain(|p| !p.is_empty());
-    format!(" {} ", parts.join(" · "))
+    while !parts.is_empty() {
+        let s = format!(" {} ", parts.join(" · "));
+        if s.chars().count() <= width {
+            return s;
+        }
+        parts.pop();
+    }
+    String::new()
+}
+
+/// Columns left in the top border after the tab bar (corners and a gap excluded).
+fn summary_room(app: &App, area: Rect) -> usize {
+    usize::from(area.width).saturating_sub(tab_bar(app).width() + 4)
 }
 
 pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
@@ -93,7 +106,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
             Theme::border()
         })
         .title(tab_bar(app))
-        .title(Line::styled(target_summary(t), Theme::muted()).right_aligned());
+        .title(Line::styled(target_summary(t, summary_room(app, area)), Theme::muted()).right_aligned());
     let inner = block.inner(area);
     frame.render_widget(block, area);
 

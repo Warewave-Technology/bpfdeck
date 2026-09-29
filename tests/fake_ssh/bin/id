@@ -1,9 +1,10 @@
 #!/bin/sh
-# Fake id (see fake-ssh.sh): root under the fake sudo or on a "rootlogin" host.
-if [ "${FAKE_ROOT:-}" = 1 ]; then
-  case "$*" in
-    -u) echo 0; exit 0 ;;
-    -un) echo root; exit 0 ;;
-  esac
-fi
-exec /usr/bin/id "$@"
+# Fake id (see fake-ssh.sh): the login user is "ops" (uid 1000) even when the tests run
+# as root; root under the fake sudo or on a "rootlogin" host (FAKE_ROOT=1).
+case "${FAKE_ROOT:-}:$*" in
+  1:-u) echo 0 ;;
+  1:-un) echo root ;;
+  0:-u) echo 1000 ;;
+  0:-un) echo ops ;;
+  *) exec /usr/bin/id "$@" ;;
+esac

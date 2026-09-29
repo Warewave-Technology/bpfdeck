@@ -180,7 +180,14 @@ impl SshTarget {
         let mut argv = vec![self.ssh.clone()];
         argv.extend(self.common_args());
         argv.extend(["-E".into(), log.into()]);
-        for opt in ["ControlMaster=yes", "ControlPersist=yes", "ConnectTimeout=15"] {
+        // Keepalives let the master notice a dead peer; `-O check` then reports it.
+        for opt in [
+            "ControlMaster=yes",
+            "ControlPersist=yes",
+            "ConnectTimeout=15",
+            "ServerAliveInterval=15",
+            "ServerAliveCountMax=3",
+        ] {
             argv.extend(["-o".into(), opt.into()]);
         }
         if batch {
@@ -501,7 +508,7 @@ mod tests {
         assert_eq!(
             s(t.master_argv(true, Path::new("/tmp/bpfdeck-501/connect-1.log"))),
             "ssh -o ControlPath=/tmp/bpfdeck-501/%C -p 2222 -l ops -E /tmp/bpfdeck-501/connect-1.log -o ControlMaster=yes -o ControlPersist=yes \
-             -o ConnectTimeout=15 -o BatchMode=yes -f -N -- 10.0.3.14"
+             -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o BatchMode=yes -f -N -- 10.0.3.14"
         );
         assert_eq!(
             s(t.control_argv("exit")),

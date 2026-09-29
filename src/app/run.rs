@@ -15,6 +15,7 @@ use crate::bpftrace::validate::Verdict;
 use crate::keymap::Action;
 use crate::model::export;
 use crate::model::form::ParamForm;
+use crate::model::log::LogKind;
 use crate::model::run_state::{ExitInfo, Run};
 use crate::msg::Cmd;
 use crate::remote::REMOTE_SCRIPT;
@@ -417,7 +418,7 @@ impl App {
                         run_id: run.id,
                         script_id: run.script_id.clone(),
                         host: t.is_remote().then(|| t.label.clone()),
-                        text: export::render_text(run, None),
+                        text: export::render_text(run, t.is_remote().then_some(t.label.as_str()), None),
                     };
                     self.notify(Level::Info, "exporting…".into());
                     return vec![cmd];
@@ -502,7 +503,11 @@ impl App {
     }
 
     pub(super) fn on_run_batch(&mut self, run_id: u64, at: std::time::Instant, batch: Batch) {
-        let Some(run) = self.target_by_run(run_id).and_then(|t| t.run.as_mut()) else {
+        let Some(target) = self.target_by_run(run_id) else {
+            return;
+        };
+        let remote = target.is_remote();
+        let Some(run) = target.run.as_mut() else {
             return;
         };
         run.dropped += batch.dropped;
@@ -512,12 +517,25 @@ impl App {
             match event {
                 RunEvent::Output(msg) => run.output(msg, at),
                 RunEvent::Stderr(line) => run.stderr(&line),
-                RunEvent::Exited(exit) => run.exited(exit_info(exit), at),
+                RunEvent::Exited(exit) => {
+                    // ssh's own failure status: the session, not bpftrace, ended.
+                    if remote && exit.code == Some(SSH_FAILED) {
+                        run.log.push_line(
+                            LogKind::System,
+                            "ssh session ended (exit 255): the connection dropped or ssh failed; \
+                             the host stops bpftrace when its session closes",
+                        );
+                    }
+                    run.exited(exit_info(exit), at)
+                }
             }
         }
         self.quit_if_idle();
     }
 }
+
+/// ssh exits with 255 when it fails itself (connection lost, auth, …).
+const SSH_FAILED: i32 = 255;
 
 fn exit_info(exit: RunExit) -> ExitInfo {
     ExitInfo {

@@ -103,7 +103,26 @@ pub fn draw_confirm(frame: &mut Frame, area: Rect, app: &App, confirm: &Confirm)
         Ok(argv) => command::display(&argv),
         Err(e) => format!("(invalid: {e})"),
     };
-    let mut lines = vec![
+    let t = app.target();
+    let mut lines = Vec::new();
+    if t.is_remote() {
+        let privilege = t.remote.as_ref().map_or("root", |r| r.privilege.as_str());
+        lines.push(field(
+            "Target",
+            vec![Span::styled(
+                format!("{} as {privilege}", t.label),
+                Theme::accent(),
+            )],
+        ));
+        lines.push(field(
+            "",
+            vec![Span::styled(
+                "the script is copied there for this run and removed afterwards",
+                Theme::muted(),
+            )],
+        ));
+    }
+    lines.extend([
         field("Path", vec![Span::raw(confirm.path.display().to_string())]),
         field("Command", vec![Span::styled(command_line, Theme::code_var())]),
         field(
@@ -114,7 +133,7 @@ pub fn draw_confirm(frame: &mut Frame, area: Rect, app: &App, confirm: &Confirm)
                 confirm.probes.join(", ")
             })],
         ),
-    ];
+    ]);
 
     if confirm.needs_unsafe {
         let calls = if confirm.unsafe_calls.is_empty() {
@@ -156,7 +175,12 @@ pub fn draw_confirm(frame: &mut Frame, area: Rect, app: &App, confirm: &Confirm)
         lines.push(Line::raw(""));
         lines.push(Line::styled(e.clone(), Theme::error()));
     }
-    popup(frame, area, format!(" Run {} ", confirm.script_id), lines, 100);
+    let title = if t.is_remote() {
+        format!(" Run {} on {} ", confirm.script_id, t.label)
+    } else {
+        format!(" Run {} ", confirm.script_id)
+    };
+    popup(frame, area, title, lines, 100);
 }
 
 /// Why the run may fail here (spec §7): privileges, lockdown, validation result.
@@ -324,7 +348,10 @@ pub fn draw_connect(frame: &mut Frame, area: Rect, form: &ConnectForm) {
         }
         ConnectPhase::NeedsAuth(message) => {
             lines.push(Line::raw(""));
-            lines.push(Line::styled(format!("  ! ssh needs you: {message}"), Theme::warn()));
+            lines.push(Line::styled(
+                format!("  ! ssh needs you: {message}"),
+                Theme::warn(),
+            ));
             lines.push(Line::styled(
                 "    bpfdeck suspends and runs ssh in the terminal, where it can ask for a \
                  passphrase, password or host key; bpfdeck never sees them.",

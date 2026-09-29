@@ -81,6 +81,11 @@ pub enum Msg {
         attempt: u64,
         reason: Option<String>,
     },
+    /// The target's SSH master is gone (checked every few seconds while connected).
+    ConnectionLost {
+        target: TargetId,
+        reason: String,
+    },
     /// All checks passed; the executor has the session and a validator for `target`.
     Connected {
         attempt: u64,

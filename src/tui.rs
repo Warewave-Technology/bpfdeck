@@ -476,7 +476,15 @@ impl Executor {
                         validate::DEFAULT_TIMEOUT,
                     );
                     lock(&validators).insert(target, Arc::new(validator));
-                    lock(&remotes).insert(target, c.target);
+                    lock(&remotes).insert(target, c.target.clone());
+                    tokio::spawn(watch_master(
+                        target,
+                        c.target,
+                        remotes.clone(),
+                        validators.clone(),
+                        tx.clone(),
+                        WATCH_EVERY,
+                    ));
                     Msg::Connected {
                         attempt,
                         target,
@@ -640,6 +648,40 @@ async fn forward_run(
     }
 }
 
+/// How often a connected target's SSH master is checked.
+const WATCH_EVERY: Duration = Duration::from_secs(10);
+
+/// Check the target's master until it is disconnected (no longer in `remotes`) or gone;
+/// then forget it and tell the app. Runs over it end by themselves (ssh exits 255).
+async fn watch_master(
+    target: TargetId,
+    remote: Arc<SshTarget>,
+    remotes: Arc<Mutex<HashMap<TargetId, Arc<SshTarget>>>>,
+    validators: Arc<Mutex<HashMap<TargetId, Arc<Validator>>>>,
+    tx: mpsc::Sender<Msg>,
+    every: Duration,
+) {
+    let current = || {
+        lock(&remotes)
+            .get(&target)
+            .is_some_and(|r| Arc::ptr_eq(r, &remote))
+    };
+    loop {
+        tokio::time::sleep(every).await;
+        if !current() {
+            return;
+        }
+        if connect::master_alive(&remote).await || !current() {
+            continue;
+        }
+        lock(&remotes).remove(&target);
+        lock(&validators).remove(&target);
+        let reason = "the ssh connection closed".to_string();
+        let _ = tx.send(Msg::ConnectionLost { target, reason }).await;
+        return;
+    }
+}
+
 /// `$TMPDIR/bpfdeck-<pid>-<name>`, keeping the file name so editors pick the right mode.
 fn temp_copy(path: &Path) -> Result<PathBuf> {
     let name = path
@@ -662,6 +704,47 @@ mod tests {
     use crate::bpftrace::command::{self, RunArgs};
     use crate::bpftrace::json::{MapValue, OutputMsg};
     use crate::bpftrace::testutil::{fake, script};
+    use crate::remote::session::testutil;
+
+    #[tokio::test]
+    async fn a_dead_master_is_reported_once_and_forgotten() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let remotes = Arc::new(Mutex::new(HashMap::new()));
+        let validators = Arc::new(Mutex::new(HashMap::new()));
+        let every = Duration::from_millis(20);
+
+        let alive = Arc::new(testutil::target("db-02", Sudo::None));
+        lock(&remotes).insert(1, alive.clone());
+        let watcher = tokio::spawn(watch_master(
+            1,
+            alive,
+            remotes.clone(),
+            validators.clone(),
+            tx.clone(),
+            every,
+        ));
+        tokio::time::sleep(every * 5).await;
+        assert!(!watcher.is_finished(), "a live master keeps being watched");
+        // Disconnecting ends the watch without a message.
+        lock(&remotes).remove(&1);
+        tokio::time::timeout(Duration::from_secs(5), watcher)
+            .await
+            .expect("ends")
+            .expect("join");
+
+        let dropped = Arc::new(testutil::target("dropped-2", Sudo::None));
+        lock(&remotes).insert(2, dropped.clone());
+        tokio::spawn(watch_master(2, dropped, remotes.clone(), validators, tx, every));
+        let msg = tokio::time::timeout(Duration::from_secs(10), rx.recv())
+            .await
+            .expect("message");
+        assert!(
+            matches!(msg, Some(Msg::ConnectionLost { target: 2, .. })),
+            "{msg:?}"
+        );
+        assert!(lock(&remotes).is_empty());
+        assert!(rx.recv().await.is_none(), "reported once");
+    }
 
     /// A printf/map flood against a deliberately slow consumer: nothing is lost silently,
     /// snapshots collapse, and the exit (after the last snapshot) always arrives.

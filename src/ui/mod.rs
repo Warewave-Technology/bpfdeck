@@ -279,8 +279,21 @@ mod tests {
         for check in checks {
             app.update(Msg::ConnectCheck { attempt, check });
         }
-        app.update(Msg::ConnectFailed { attempt, reason: None });
+        app.update(Msg::ConnectFailed {
+            attempt,
+            reason: None,
+        });
         insta::assert_snapshot!(render(&app, 120, 40));
+    }
+
+    #[test]
+    fn remote_confirm_80x24() {
+        let mut app = ready();
+        connect(&mut app, "ops@10.0.3.14");
+        keys(&mut app, &[KeyCode::Char('/')]);
+        type_text(&mut app, "sysc");
+        keys(&mut app, &[KeyCode::Enter, KeyCode::Enter]);
+        insta::assert_snapshot!(render(&app, 80, 24));
     }
 
     #[test]

@@ -7,6 +7,7 @@
 #   pwsudo*       → the fake sudo requires a password ("secret")
 #   rootlogin*    → logged in as root (no sudo needed)
 #   nobpftrace*   → no bpftrace in PATH
+#   dropped*      → `-O check` fails (the master connection is gone)
 # `-E file` sends ssh's own messages there. `-O check|exit` and masters (`-f -N`) succeed.
 control=""
 master=0
@@ -28,7 +29,12 @@ shift
 case "$host" in
   *unreachable*) echo "ssh: connect to host $host port 22: Connection refused" >&2; exit 255 ;;
 esac
-[ -n "$control" ] && exit 0
+if [ -n "$control" ]; then
+  case "$host:$control" in
+    *dropped*:check) echo "Control socket connect: No such file or directory" >&2; exit 255 ;;
+  esac
+  exit 0
+fi
 if [ "$master" = 1 ]; then
   case "$host" in
     *needs-auth*) [ "$batch" = 1 ] && { echo "$host: Permission denied (publickey,password)." >&2; exit 255; } ;;
@@ -39,8 +45,10 @@ case "$host" in
   *pwsudo*) FAKE_SUDO_PASSWORD=1; export FAKE_SUDO_PASSWORD ;;
 esac
 case "$host" in
-  *rootlogin*) FAKE_ROOT=1; export FAKE_ROOT ;;
+  *rootlogin*) FAKE_ROOT=1 ;;
+  *) FAKE_ROOT=0 ;;
 esac
+export FAKE_ROOT
 here="$(cd "$(dirname "$0")" && pwd)"
 case "$host" in
   *nobpftrace*) PATH="$here/bin:$PATH" ;;

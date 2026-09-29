@@ -10,10 +10,14 @@ use super::run_state::Run;
 /// bpftrace's histogram bar width.
 const BAR_WIDTH: usize = 52;
 
-pub fn render_text(run: &Run, raw_note: Option<&str>) -> String {
+/// `host`: the remote target the run was on (none for local runs).
+pub fn render_text(run: &Run, host: Option<&str>, raw_note: Option<&str>) -> String {
     let mut out = String::new();
     let secs = run.elapsed.as_secs();
     let _ = writeln!(out, "bpfdeck run export");
+    if let Some(host) = host {
+        let _ = writeln!(out, "host:     {host}");
+    }
     let _ = writeln!(out, "script:   {}", run.script_id);
     let _ = writeln!(out, "command:  {}", run.command);
     let _ = writeln!(out, "state:    {}", run.state_label());
@@ -219,6 +223,11 @@ mod tests {
             },
             t0 + Duration::from_secs(75),
         );
-        insta::assert_snapshot!(render_text(&run, Some("raw NDJSON truncated at 256 MiB")));
+        insta::assert_snapshot!(render_text(&run, None, Some("raw NDJSON truncated at 256 MiB")));
+        let remote = render_text(&run, Some("ops@db-02"), None);
+        assert!(
+            remote.starts_with("bpfdeck run export\nhost:     ops@db-02\nscript:   "),
+            "{remote}"
+        );
     }
 }
