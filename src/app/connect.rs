@@ -326,6 +326,7 @@ impl App {
                 return Vec::new();
             }
         };
+        let order: Vec<String> = dests.iter().map(Dest::label).collect();
         let (fresh, already): (Vec<Dest>, Vec<Dest>) =
             dests.into_iter().partition(|d| !connected.contains(&d.label()));
         if fresh.is_empty() {
@@ -361,6 +362,9 @@ impl App {
             attempt += 1;
             target += 1;
         }
+        // Rows (and so tabs) in the order of the host field.
+        form.rows
+            .sort_by_key(|r| order.iter().position(|o| *o == r.label()).unwrap_or(usize::MAX));
         (self.next_attempt, self.next_target_id) = (attempt, target);
         cmds
     }
@@ -456,6 +460,8 @@ impl App {
         row.state = RowState::Connected(summary);
         // The first host of this dialog that connects becomes the active tab.
         let activate = !std::mem::replace(&mut form.activated, true);
+        // Tabs follow the order the hosts were typed in, not the order they connect.
+        let order: Vec<String> = form.rows.iter().map(HostRow::label).collect();
         let label = dest.label();
         let mut target = Target::new(id, label.clone(), TargetKind::Ssh(dest));
         target.remote = Some(info);
@@ -471,8 +477,18 @@ impl App {
                 i
             }
             None => {
-                self.targets.push(target);
-                self.targets.len() - 1
+                let rank = |l: &str| order.iter().position(|o| o == l);
+                let mine = rank(&label);
+                let at = self
+                    .targets
+                    .iter()
+                    .position(|t| matches!((rank(&t.label), mine), (Some(r), Some(m)) if r > m))
+                    .unwrap_or(self.targets.len());
+                self.targets.insert(at, target);
+                if at <= self.active && self.targets.len() > 1 {
+                    self.active += 1;
+                }
+                at
             }
         };
         if activate {
@@ -943,6 +959,17 @@ mod tests {
             app.notice
                 .as_ref()
                 .is_some_and(|n| n.text.starts_with("connected to 3 hosts"))
+        );
+        let tabs: Vec<&str> = app.targets.iter().map(|t| t.label.as_str()).collect();
+        assert_eq!(
+            tabs,
+            vec!["local", "db-01", "db-02", "db-03"],
+            "in the order typed"
+        );
+        assert_eq!(
+            app.target().label,
+            "db-01",
+            "the host that connected on the retry is selected"
         );
     }
 
