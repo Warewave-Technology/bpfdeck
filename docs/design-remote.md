@@ -6,15 +6,85 @@ host; the owner rejected it (D-020): *nothing may be installed on the target*. A
 you can reach over SSH with admin rights must work, because this is for fixing problems
 on servers you did not prepare.
 
-## Goal
+## Goal (owner's requirements, 2026-09-29)
 
-`bpfdeck --host [user@]server01 <source>`: the same TUI, fed by scripts from your laptop
-(local directory or git repo), validated and run **on server01**, with live panels, the
-exit-time dump and exports. The host needs `bpftrace`, a POSIX `sh` and coreutils,
-nothing else, and nothing is left behind.
+- No `--host` flag. bpfdeck starts as today (`bpfdeck <source>`); **inside the TUI a key
+  opens "connect to a host"**: it asks for the address, runs its checks, connects.
+- From then on **everything runs on that target**: validation, runs, exports.
+- **Each target gets a results tab at the bottom** of the screen; what you run there shows
+  up in that tab. Several hosts at once come later, so targets are tabs from day one.
+- The **source given at startup applies to every target**: git stays git, a local path stays
+  a local path, resolved on the laptop. The script being run is copied to the target at
+  that moment and deleted when it is done.
+- Nothing is installed on the target (D-020). It needs `bpftrace`, a POSIX `sh` and
+  coreutils.
 
-Non-goals for the first cut: several hosts at once (fleet), scripts that already live on
-the server.
+## User experience
+
+### Screen
+
+The browser stays on top; results move to a tabbed pane at the bottom, one tab per
+target. `local` is the machine bpfdeck runs on.
+
+```
+╭ Scripts (93) ──────────────╮╭ 1 Info │ 2 Source │ 3 Validation ── tools/biolatency.bt ╮
+│▸ src/  7                   ││Block I/O latency as a histogram.                        │
+│▾ tools/  45                ││Status   ● runs on 10.0.3.14 (dry-run)                   │
+│  ● biolatency  Block I/O…  ││Probes   ✓ tracepoint:block:block_rq_issue …             │
+│  ● biosnoop   Block I/O…   ││                                                         │
+╰────────────────────────────╯╰─────────────────────────────────────────────────────────╯
+╭ local │ 10.0.3.14 ▶ │ db-02 ✓ │ + ─────────────────────────────── root via sudo · 5.14 ╮
+│▶ biolatency.bt  running  00:12   probes 3  errors 0  dropped 0                          │
+│╭ @usecs · hist ─────────────────────────────────────────────────── 12 updates · 00:12 ╮│
+││[16, 32)   210 ████████████████████████████████████████                              ││
+││[32, 64)    95 ██████████████████▏                                                   ││
+│╰──────────────────────────────────────────────────────────────────────────────────────╯│
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+ Enter run on 10.0.3.14 · c connect · < > target · ? help      10.0.3.14 · bpftrace v0.21.2
+```
+
+- The **active target** is the selected tab. The list's status glyphs, the Info and
+  Validation tabs and `Enter` all refer to it (validated per target, cached per host).
+- Tab glyphs: `▶` a run is active there, `✓` last run finished, `✗` connection lost, none
+  when idle. `+` opens the connect dialog.
+- The results pane shows the selected tab's run view (header, panels, log, exactly as
+  today). `z` gives it the whole screen; `Esc` returns focus to the list, `o` to results.
+- One run per target at a time (D-010 becomes "per target"); runs on different targets can
+  go on together, each in its tab. Leaving a tab does not stop its run.
+
+### Connecting: `c`
+
+```
+╭ Connect to a host ─────────────────────────────────────────────────────────╮
+│ Host   10.0.3.14█                 IP, hostname, user@host or ~/.ssh/config alias │
+│ Port   22                                                                   │
+│ sudo   (•) automatic   ( ) root login   ( ) sudo with password: ••••••      │
+│                                                                             │
+│ ✓ ssh: connected as ops (key from ssh-agent)                     140 ms     │
+│ ✓ host: Rocky Linux 9.4 · x86_64 · 5.14.0-427.13.1.el9_4                    │
+│ ✓ shell: sh, mktemp, head -c, setsid                                        │
+│ ✓ root: sudo -n works                                                       │
+│ ✓ bpftrace v0.21.2 at /usr/bin/bpftrace · --dry-run supported               │
+│ ✓ kernel: lockdown none · BTF present                                       │
+│ … validating 93 scripts on 10.0.3.14  41/93                                 │
+│                                                                             │
+│ Enter connect · Esc cancel                                                  │
+╰─────────────────────────────────────────────────────────────────────────────╯
+```
+
+- The checks run in order and stop at the first hard failure, with the reason and what to
+  do (for example "sudo needs a password: pick 'sudo with password' or use root").
+  Warnings (no `setsid`, lockdown, old bpftrace without `--dry-run`) do not block.
+- On success a tab opens, becomes the active target, and validation of the whole source
+  runs on it in the background (the list fills in as results arrive).
+- **Interactive SSH authentication** (key passphrase, password, 2FA, unknown host key): the
+  checks try non-interactive SSH first. If SSH needs you, the dialog offers "authenticate
+  in the terminal": bpfdeck suspends the TUI exactly like `e` does for `$EDITOR`, runs
+  `ssh … -fN` so SSH asks its own questions in the plain terminal, then resumes and
+  continues the checks over the connection that was just opened. bpfdeck never sees
+  SSH passwords or passphrases.
+- A **sudo password**, if chosen, is typed into the dialog's masked field (see question 1).
+- `d` in a tab disconnects that target (asks if a run is active there).
 
 ## How it works
 
@@ -99,11 +169,13 @@ line was swallowed by dash (→ `bpfdeck-remote: sudo` marker first).
 
 ## What changes in bpfdeck
 
-**Connection** (before the TUI starts, in the normal terminal): bpfdeck runs
-`ssh -o ControlMaster=yes -o ControlPersist=… -o ControlPath=… -fN -- <host>` so that SSH
-itself asks for a key passphrase, password, 2FA or host key confirmation, exactly as the
-user is used to. All later sessions reuse that master with `-o BatchMode=yes` (never a
-prompt inside the TUI) and it is closed on exit (`ssh -O exit`). The system `ssh` binary is
+**Connection** (from the connect dialog): one SSH master per target,
+`ssh -o ControlMaster=yes -o ControlPersist=… -o ControlPath=… -fN -- <host>`, first with
+`BatchMode=yes`; only if that needs a human, the same command runs in the terminal while
+the TUI is suspended (the `$EDITOR` handoff, input gate included), so SSH itself asks for a
+passphrase, password, 2FA or host key confirmation. All later sessions reuse the master
+with `-o BatchMode=yes` (never a prompt inside the TUI); `d`, a lost connection or quitting
+closes it (`ssh -O exit`). The system `ssh` binary is
 used, like `git` (D-004): keys, agent, `~/.ssh/config`, ProxyJump and known_hosts all apply.
 The host argument is validated (no leading `-`) and placed after `--`. The control socket
 lives in a private `0700` directory with a short path (unix socket paths are limited to
@@ -112,7 +184,13 @@ lives in a private `0700` directory with a short path (unix socket paths are lim
 **Privileges** (D-018): logged in as root → no sudo line. Otherwise `sudo -n`. If sudo needs
 a password, see question 1.
 
-**Execution layer:** a `Target` (local or SSH) given to the executor. For SSH targets:
+**Targets:** the app keeps a list of targets (local + connected hosts), each with its
+connection state, bpftrace info, validation results and run. The browser shows the active
+target's validation; `Cmd::Validate` / `StartRun` / `StopRun` / `ExportRun` carry a target
+id. **The source is resolved once, on the laptop**, and shared by all targets.
+
+**Execution layer:** the executor dispatches each command to the target's backend (local
+or SSH). For SSH targets:
 - `capture()` (detect, dry-run, `-l`) spawns `ssh … sh -s` and speaks the session protocol;
   detection runs a fixed argv (`sh -c '<fixed probe of uname -r, id -u, lockdown,
   bpftrace --version/--help>'`, no user data).
@@ -123,10 +201,9 @@ a password, see question 1.
   exports (bpftrace's raw stdout arrives locally, byte for byte).
 - The validator's cache key already has bpftrace version and kernel; the host is added.
 
-**UI:** status bar `server01 · bpftrace v0.21.2 · 5.14.0-427… · root via sudo`; the run
-confirmation says **Run on server01 as root**; connection states (connecting, ready, lost)
-and SSH errors (with ssh's own message) are shown; on a lost connection the run view says
-the run was stopped on the host.
+**UI:** the layout, connect dialog and tabs above; the run confirmation says **Run on
+10.0.3.14 as root**; SSH errors show ssh's own message; on a lost connection the tab turns
+`✗` and its run view says the run was stopped on the host.
 
 ## Security
 
@@ -147,11 +224,11 @@ the run was stopped on the host.
 
 | Case | Behavior |
 |---|---|
-| Host unreachable, auth fails, host key changed | ssh's own message before the TUI starts |
+| Host unreachable, auth fails, host key changed | The failing check in the connect dialog, with ssh's own message |
 | Master connection dies later | "connection lost"; runs stopped on the host by EOF; a reconnect action |
 | sudo needs a password and none was given | Clear message: use root, NOPASSWD, or the password option |
-| Wrong sudo password | Detected from `Sorry, try again.`; asked again (before the TUI) |
-| No `bpftrace` on the host | Same as local: `?` status, "not found on server01" (`--remote-bpftrace <path>` for odd PATHs) |
+| Wrong sudo password | Detected from `Sorry, try again.`; the dialog asks again |
+| No `bpftrace` on the host | The check fails with "not found in PATH"; the dialog then offers a bpftrace path field |
 | Kernel lockdown on the host | The red banner, for that host |
 | A handshake marker never arrives (odd shell, broken sudo config) | Timeout, the session's stderr shown |
 | No `setsid` on the host | Falls back to signalling bpftrace alone (children of `system()` could survive) |
@@ -169,22 +246,26 @@ the run was stopped on the host.
 
 | Step | Content | Size |
 |---|---|---|
-| R1 | `Target` in the bpftrace layer; local stays the default. Runner stop via stdin line as an option | S |
-| R2 | Embedded runner + session protocol (handshakes, framing, timeouts); fake-ssh tests on dash and bash | M |
-| R3 | `--host`: ControlMaster setup before the TUI, BatchMode sessions, teardown; sudo modes | M |
-| R4 | UI: host in status bar and confirmation, connection states and errors | S |
-| R5 | Real end-to-end via the sshd container; spec §3/§6 updates, README | S |
+| R1 | Targets in the app model (local only at first): per-target validation, run and results tab; bottom results pane with tabs; no behavior change for local use | M |
+| R2 | Embedded runner + session protocol (handshakes, framing, timeouts); SSH backend for capture/run; fake-ssh tests on dash and bash | M |
+| R3 | Connect dialog: host/port/sudo fields, the checks, terminal handoff for interactive auth, master lifecycle, `d` disconnect | M |
+| R4 | Per-target validation on connect, confirmation naming the host, lost-connection handling, exports per tab | S |
+| R5 | Real end-to-end via the sshd container (root, NOPASSWD, password sudo); spec §3/§5/§6, README, D-entries | S |
+
+Multi-host (later): run the selected script on several targets at once, each result in its
+tab; a validation matrix (script × host) in the Validation tab.
 
 ## Questions for you
 
-1. **sudo with a password:** support it (asked once before the TUI, like `ansible -K`, kept in
-   memory for the session), or only root / NOPASSWD sudo? The spike shows it works; the
-   cost is holding a password in memory.
-2. **Scripts from the laptop only** (local dir or git, sent per run) — or should
-   `--host` also be able to list scripts that already live on the server?
-3. **One host per session** first; fleet (validate a collection on N hosts) later — OK?
-4. **Minimum on the host:** `bpftrace`, POSIX `sh`, `mktemp`, `head -c`, optionally
-   `setsid` (all present on RHEL 8/9 and Debian/Ubuntu) — acceptable?
+1. **sudo with a password:** a masked field in the connect dialog, the password kept in
+   memory for as long as that target is connected and sent over the SSH channel to
+   `sudo -S` for each operation (the spike shows this works; sudo's own timestamp does not
+   carry over between non-interactive sessions). OK, or root / NOPASSWD only?
+2. **Keys:** `c` connect (also `+` on the tab bar), `<` `>` switch target tabs, `d` disconnect
+   the selected target. OK?
+3. **`local` tab:** always present (on a laptop without bpftrace it just shows "no bpftrace"),
+   or only when bpftrace exists locally?
+4. **Layout:** browser on top, results pane at the bottom (`z` to maximize) as in the mockup?
 
 ## Appendix: the runner, verbatim (as tested)
 
