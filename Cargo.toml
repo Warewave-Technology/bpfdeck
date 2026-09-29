@@ -2,6 +2,8 @@
 name = "bpfdeck"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+repository = "https://github.com/Warewave-Technology/bpfdeck"
 description = "Browse, validate and run bpftrace scripts from a directory or git repo, with live visualization"
 publish = false
 

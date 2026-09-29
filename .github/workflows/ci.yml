@@ -13,6 +13,15 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
 
+  # The oldest Rust that builds it (Cargo.toml rust-version).
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked
+
   # Catch musl/static-link breakage on every push, not only when tagging a release.
   musl:
     runs-on: ubuntu-latest

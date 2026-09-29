@@ -10,16 +10,22 @@ sudo bpfdeck https://github.com/bpftrace/bpftrace     # or a local directory
 - Tells you which ones will actually run on this kernel (`--dry-run` / probe checks)
 - Runs them with a confirmation step and a form for script parameters
 - Shows output live: histograms, sorted top-tables, stats, and a filterable event log
+- Edit a script inline before running it; the file itself is never changed
+- Remote hosts over your own `ssh`, nothing installed on them; run on several at once
+  and compare the hosts side by side
 - Gruvbox dark
 
-Status: early development — see `docs/milestones.md`.
+Version 0.1.0 — see `CHANGELOG.md`.
 
 ## Requirements
 - Linux, `bpftrace` in `PATH` (or `--bpftrace <path>`), root for running scripts
-- `git` for git sources
+- `git` for git sources, `ssh` for remote hosts
+- Remote hosts: `bpftrace`, a POSIX `sh` and coreutils; root login or sudo
+- Building from source: Rust 1.88 or newer
 
 ## Install
-Releases ship static binaries (musl, no runtime dependencies) for x86_64 and aarch64:
+[Releases](https://github.com/Warewave-Technology/bpfdeck/releases) ship static binaries
+(musl, no runtime dependencies) for x86_64 and aarch64:
 ```sh
 sha256sum -c bpfdeck-vX.Y.Z-x86_64-unknown-linux-musl.tar.gz.sha256
 tar xzf bpfdeck-vX.Y.Z-x86_64-unknown-linux-musl.tar.gz
