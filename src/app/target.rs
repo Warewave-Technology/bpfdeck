@@ -4,6 +4,7 @@
 use super::{BpftraceState, LogView};
 use crate::model::run_state::Run;
 use crate::remote::Dest;
+pub use crate::remote::facts::RemoteInfo;
 use crate::sys::SystemInfo;
 
 pub type TargetId = u32;
@@ -21,15 +22,6 @@ pub enum Conn {
     Ready,
     /// The SSH connection went away; runs there were stopped by the runner (EOF).
     Lost(String),
-}
-
-/// Facts about a remote host from the connect checks.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RemoteInfo {
-    pub os: String,
-    pub arch: String,
-    /// `root`, `root via sudo`, `root via sudo (password)`.
-    pub privilege: String,
 }
 
 #[derive(Debug)]

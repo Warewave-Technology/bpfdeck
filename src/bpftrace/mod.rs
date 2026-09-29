@@ -19,6 +19,8 @@ use nix::unistd::Pid;
 use regex::Regex;
 use tokio::process::Command;
 
+use crate::remote::session::Backend;
+
 const DETECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// What the installed bpftrace can do, detected once at startup (D-006).
@@ -59,6 +61,11 @@ pub enum DetectError {
 /// Run `--version` and `--help`. `--help` goes to stderr and exits non-zero on older
 /// versions, so both streams are read and its status is ignored.
 pub async fn detect(path: &Path) -> Result<BpftraceInfo, DetectError> {
+    detect_on(&Backend::Local, path).await
+}
+
+/// [`detect`] on a target (`path` is the bpftrace path there).
+pub async fn detect_on(backend: &Backend, path: &Path) -> Result<BpftraceInfo, DetectError> {
     let to_err = |e| match e {
         CaptureError::Spawn(source) | CaptureError::Io(source) => DetectError::Spawn {
             path: path.to_path_buf(),
@@ -72,7 +79,8 @@ pub async fn detect(path: &Path) -> Result<BpftraceInfo, DetectError> {
             output,
         },
     };
-    let version = capture(&command::version_argv(path), DETECT_TIMEOUT)
+    let version = backend
+        .capture(&command::version_argv(path), None, DETECT_TIMEOUT)
         .await
         .map_err(to_err)?;
     if !version.success {
@@ -81,7 +89,8 @@ pub async fn detect(path: &Path) -> Result<BpftraceInfo, DetectError> {
             output: version.combined(),
         });
     }
-    let help = capture(&command::help_argv(path), DETECT_TIMEOUT)
+    let help = backend
+        .capture(&command::help_argv(path), None, DETECT_TIMEOUT)
         .await
         .map_err(to_err)?;
     let version_raw = version.stdout.trim().to_string();

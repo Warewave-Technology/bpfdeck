@@ -51,6 +51,10 @@ struct Cli {
         requires = "run"
     )]
     params: Vec<String>,
+
+    /// The ssh binary for remote targets (test hook).
+    #[arg(long, default_value = "ssh", hide = true)]
+    ssh: std::ffi::OsString,
 }
 
 fn main() -> Result<ExitCode> {
@@ -64,6 +68,11 @@ fn main() -> Result<ExitCode> {
         return headless::run(&cli.source, bpftrace, id, &cli.params);
     }
     let runtime = tokio::runtime::Runtime::new()?;
-    runtime.block_on(tui::run(cli.source, bpftrace.to_path_buf(), cli.export_dir))?;
+    runtime.block_on(tui::run(
+        cli.source,
+        bpftrace.to_path_buf(),
+        cli.export_dir,
+        cli.ssh,
+    ))?;
     Ok(ExitCode::SUCCESS)
 }

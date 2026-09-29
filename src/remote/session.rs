@@ -29,12 +29,26 @@ const SUDO_PASSWORD: &str = "echo 'bpfdeck-remote: sudo' >&2; exec sudo -S -p ''
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// A password that never shows up in `Debug` output (logs, `Cmd` dumps, panics).
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct Secret(String);
 
 impl Secret {
+    #[cfg(test)]
     pub fn new(s: String) -> Self {
         Self(s)
+    }
+    pub fn push(&mut self, c: char) {
+        self.0.push(c);
+    }
+    pub fn pop(&mut self) {
+        self.0.pop();
+    }
+    /// Characters, for drawing a mask.
+    pub fn len(&self) -> usize {
+        self.0.chars().count()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
     fn expose(&self) -> &str {
         &self.0
@@ -158,11 +172,14 @@ impl SshTarget {
         args
     }
 
-    /// `ssh … -o ControlMaster=yes -o ControlPersist=yes -f -N -- host`. With `batch`,
-    /// fails instead of prompting (run it without `batch` in the plain terminal).
-    pub fn master_argv(&self, batch: bool) -> Vec<OsString> {
+    /// `ssh … -o ControlMaster=yes -o ControlPersist=yes -E log -f -N -- host`. With
+    /// `batch`, fails instead of prompting (run it without `batch` in the plain terminal).
+    /// ssh's messages go to `log`: the backgrounded master would otherwise keep a stderr
+    /// pipe open forever, or write into the TUI.
+    pub fn master_argv(&self, batch: bool, log: &Path) -> Vec<OsString> {
         let mut argv = vec![self.ssh.clone()];
         argv.extend(self.common_args());
+        argv.extend(["-E".into(), log.into()]);
         for opt in ["ControlMaster=yes", "ControlPersist=yes", "ConnectTimeout=15"] {
             argv.extend(["-o".into(), opt.into()]);
         }
@@ -203,10 +220,19 @@ impl SshTarget {
     /// Start `argv` on the host (with `script` as `script.bt` in the runner's temp dir).
     pub async fn open(&self, argv: &[OsString], script: Option<&[u8]>) -> Result<Opened, SessionError> {
         let payload = payload(argv, script)?;
-        let mut child = self
-            .session_command()
+        let child = self.spawn_session()?;
+        self.handshake(child, payload).await
+    }
+
+    /// The local `ssh … sh -s`, before any handshake.
+    fn spawn_session(&self) -> Result<Child, SessionError> {
+        self.session_command()
             .spawn()
-            .map_err(|e| SessionError::Spawn(e.to_string()))?;
+            .map_err(|e| SessionError::Spawn(e.to_string()))
+    }
+
+    /// Become root, send the runner and the payload; kills the session on failure.
+    async fn handshake(&self, mut child: Child, payload: Vec<u8>) -> Result<Opened, SessionError> {
         let pgid = child.id().unwrap_or(0);
         let (Some(mut stdin), Some(stdout), Some(stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
@@ -285,29 +311,35 @@ impl SshTarget {
             .unwrap_or(Err(CaptureError::Timeout))
     }
 
-    /// Start a run on the host; events flow exactly as for a local run.
-    pub async fn start_run(
+    /// Start a run on the host; events flow exactly as for a local run. `ssh` is spawned
+    /// here, the handshake continues in the background (see `runner::start_deferred`).
+    pub fn start_run(
         &self,
         argv: &[OsString],
         script: &[u8],
         tx: mpsc::Sender<RunEvent>,
         escalation: Escalation,
-        spool: Option<&Spool>,
+        spool: Option<Spool>,
     ) -> Result<RunHandle, SessionError> {
-        let opened = self.open(argv, Some(script)).await?;
-        Ok(runner::start(
-            Started {
+        let payload = payload(argv, Some(script))?;
+        let child = self.spawn_session()?;
+        let pgid = child.id().unwrap_or(0);
+        let this = self.clone();
+        let ready = async move {
+            let opened = this
+                .handshake(child, payload)
+                .await
+                .map_err(|e| format!("{}: {e}", this.dest.label()))?;
+            Ok(Started {
                 child: opened.child,
                 pgid: opened.pgid,
                 stdout: Box::new(opened.stdout),
                 stderr: Box::new(opened.stderr),
                 stop: StopMode::StdinLine(opened.stdin),
                 remote: true,
-            },
-            tx,
-            escalation,
-            spool,
-        ))
+            })
+        };
+        Ok(runner::start_deferred(pgid, tx, escalation, spool, ready))
     }
 }
 
@@ -415,6 +447,7 @@ mod tests {
     use super::*;
     use crate::bpftrace::command::{self, RunArgs};
     use crate::bpftrace::json::{HistSeries, OutputMsg};
+    use crate::bpftrace::runner::RunExit;
     use crate::bpftrace::testutil::fake;
     use pretty_assertions::assert_eq;
     use std::path::Path;
@@ -466,8 +499,8 @@ mod tests {
                 .join(" ")
         };
         assert_eq!(
-            s(t.master_argv(true)),
-            "ssh -o ControlPath=/tmp/bpfdeck-501/%C -p 2222 -l ops -o ControlMaster=yes -o ControlPersist=yes \
+            s(t.master_argv(true, Path::new("/tmp/bpfdeck-501/connect-1.log"))),
+            "ssh -o ControlPath=/tmp/bpfdeck-501/%C -p 2222 -l ops -E /tmp/bpfdeck-501/connect-1.log -o ControlMaster=yes -o ControlPersist=yes \
              -o ConnectTimeout=15 -o BatchMode=yes -f -N -- 10.0.3.14"
         );
         assert_eq!(
@@ -544,7 +577,6 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(runner::CHANNEL_CAPACITY);
         let mut handle = target("host", Sudo::NoPassword)
             .start_run(&argv, script, tx, FAST, None)
-            .await
             .expect("start");
         let mut events = Vec::new();
         while events.len() < 5 {
@@ -576,13 +608,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn failed_handshake_ends_the_run_with_the_reason() {
+        let argv = os(&["true"]);
+        let (tx, mut rx) = mpsc::channel(runner::CHANNEL_CAPACITY);
+        let _handle = target("pwsudo", Sudo::NoPassword)
+            .start_run(&argv, b"", tx, FAST, None)
+            .expect("spawn");
+        let mut events = Vec::new();
+        while let Some(e) = tokio::time::timeout(Duration::from_secs(20), rx.recv())
+            .await
+            .expect("event")
+        {
+            events.push(e);
+        }
+        assert!(
+            matches!(events.as_slice(), [RunEvent::Stderr(m), RunEvent::Exited(RunExit { error: Some(_), .. })] if m.contains("pwsudo: sudo needs a password")),
+            "{events:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn remote_stop_escalates_and_reports_signals() {
         // A "bpftrace" that ignores SIGINT: the runner escalates to SIGTERM on the host.
         let argv = os(&["/bin/sh", "-c", "trap '' INT; while :; do sleep 0.1; done"]);
         let (tx, mut rx) = mpsc::channel(runner::CHANNEL_CAPACITY);
         let mut handle = target("host", Sudo::None)
             .start_run(&argv, b"", tx, Escalation::default(), None)
-            .await
             .expect("start");
         // "started" comes before the command had a chance to install its trap.
         tokio::time::sleep(Duration::from_millis(300)).await;

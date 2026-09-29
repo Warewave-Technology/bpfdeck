@@ -209,6 +209,80 @@ pub fn start(
     escalation: Escalation,
     spool: Option<&Spool>,
 ) -> RunHandle {
+    let (handle, parts) = handle(started.pgid);
+    start_with(started, tx, escalation, spool, parts);
+    handle
+}
+
+/// Like [`start`] for a process that first has to get ready (the remote handshake):
+/// the handle exists right away, so a stop or drop during `ready` is not lost. If `ready`
+/// fails, its message becomes a stderr line and the run exits with that error.
+pub fn start_deferred(
+    pgid: u32,
+    tx: mpsc::Sender<RunEvent>,
+    escalation: Escalation,
+    spool: Option<Spool>,
+    ready: impl Future<Output = Result<Started, String>> + Send + 'static,
+) -> RunHandle {
+    let (handle, mut parts) = handle(pgid);
+    tokio::spawn(async move {
+        let started = tokio::select! {
+            started = ready => started,
+            // Stopped or dropped before it ran: nothing to wait for.
+            _ = &mut parts.stop_rx => Err("stopped before it started".to_string()),
+        };
+        match started {
+            Ok(started) => start_with(started, tx, escalation, spool.as_ref(), parts),
+            Err(e) => {
+                signal_group(pgid, Signal::SIGKILL);
+                parts.finished.store(true, Ordering::Release);
+                let _ = tx.send(RunEvent::Stderr(e.clone())).await;
+                let exit = RunExit {
+                    code: None,
+                    signal: None,
+                    forced: None,
+                    error: Some(e),
+                };
+                let _ = tx.send(RunEvent::Exited(exit)).await;
+            }
+        }
+    });
+    handle
+}
+
+/// The supervisor's ends of a [`RunHandle`].
+struct HandleParts {
+    stop_rx: oneshot::Receiver<()>,
+    finished: Arc<AtomicBool>,
+    spool_truncated: Arc<AtomicBool>,
+}
+
+fn handle(pgid: u32) -> (RunHandle, HandleParts) {
+    let (stop_tx, stop_rx) = oneshot::channel();
+    let finished = Arc::new(AtomicBool::new(false));
+    let spool_truncated = Arc::new(AtomicBool::new(false));
+    (
+        RunHandle {
+            pgid,
+            stop: Some(stop_tx),
+            finished: finished.clone(),
+            spool_truncated: spool_truncated.clone(),
+        },
+        HandleParts {
+            stop_rx,
+            finished,
+            spool_truncated,
+        },
+    )
+}
+
+fn start_with(
+    started: Started,
+    tx: mpsc::Sender<RunEvent>,
+    escalation: Escalation,
+    spool: Option<&Spool>,
+    parts: HandleParts,
+) {
     let Started {
         child,
         pgid,
@@ -217,7 +291,11 @@ pub fn start(
         stop,
         remote,
     } = started;
-    let spool_truncated = Arc::new(AtomicBool::new(false));
+    let HandleParts {
+        stop_rx,
+        finished,
+        spool_truncated,
+    } = parts;
     let spool = spool.and_then(|s| {
         let file = File::create(&s.path).ok()?;
         Some(SpoolWriter {
@@ -242,9 +320,6 @@ pub fn start(
             }
         })),
     ];
-
-    let (stop_tx, stop_rx) = oneshot::channel();
-    let finished = Arc::new(AtomicBool::new(false));
     tokio::spawn(supervise(
         child,
         Stopper {
@@ -256,14 +331,8 @@ pub fn start(
         stop_rx,
         readers,
         tx,
-        finished.clone(),
-    ));
-    RunHandle {
-        pgid,
-        stop: Some(stop_tx),
         finished,
-        spool_truncated,
-    }
+    ));
 }
 
 struct Stopper {

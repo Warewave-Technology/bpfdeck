@@ -1,0 +1,3 @@
+#!/bin/sh
+# The host's bpftrace (see fake-ssh.sh): the fake one.
+exec "$(dirname "$0")/../../fake_bpftrace/fake-bpftrace.sh" "$@"

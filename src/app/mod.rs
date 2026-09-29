@@ -1,5 +1,6 @@
 //! Application state and reducer: `App::update(Msg) -> Vec<Cmd>`. No I/O here, ever.
 
+mod connect;
 mod filter;
 mod run;
 pub mod target;
@@ -19,6 +20,7 @@ use crate::model::run_state::Run;
 use crate::msg::{Cmd, Msg};
 use crate::source::{Origin, ResolvedSource, SourceSpec};
 use crate::sys::SystemInfo;
+pub use connect::{ConnectForm, Field as ConnectField, Phase as ConnectPhase, SudoMode};
 use filter::Fuzzy;
 pub use run::{Ask, Confirm, LogView};
 use target::{LOCAL, Target, TargetId};
@@ -93,6 +95,7 @@ pub enum Overlay {
     Params { script_id: String, form: ParamForm },
     Confirm(Confirm),
     Ask(Ask),
+    Connect(ConnectForm),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,6 +123,7 @@ pub struct App {
     /// Index into `targets` of the selected tab: the active target.
     pub active: usize,
     next_target_id: TargetId,
+    next_attempt: u64,
     /// Indices into `entries` matching the filter, in display order (ranked).
     pub visible: Vec<usize>,
     /// What the list shows: scripts, and directory rows in tree view.
@@ -160,6 +164,7 @@ impl App {
             targets: vec![Target::local()],
             active: 0,
             next_target_id: LOCAL + 1,
+            next_attempt: 1,
             visible: Vec::new(),
             rows: Vec::new(),
             cursor: 0,
@@ -256,6 +261,7 @@ impl App {
             (Some(Overlay::Params { .. }), _) => Context::Form,
             (Some(Overlay::Confirm(_)), _) => Context::Confirm,
             (Some(Overlay::Ask(_)), _) => Context::Ask,
+            (Some(Overlay::Connect(_)), _) => Context::Connect,
             (None, Screen::Browser) if self.filter_editing => Context::Filter,
             (None, Screen::Browser) => Context::Browser,
             (None, Screen::Run) if self.target().log_view.editing => Context::LogFilter,
@@ -337,6 +343,26 @@ impl App {
                 }
                 Vec::new()
             }
+            Msg::ConnectCheck { attempt, check } => {
+                self.on_connect_check(attempt, check);
+                Vec::new()
+            }
+            Msg::ConnectNeedsAuth { attempt, message } => {
+                self.on_connect_needs_auth(attempt, message);
+                Vec::new()
+            }
+            Msg::ConnectFailed { attempt, reason } => {
+                self.on_connect_failed(attempt, reason);
+                Vec::new()
+            }
+            Msg::Connected {
+                attempt,
+                target,
+                dest,
+                info,
+                host,
+                bpftrace,
+            } => self.on_connected(attempt, target, dest, info, host, bpftrace),
             Msg::Tick(now) => {
                 for run in self.targets.iter_mut().filter_map(|t| t.run.as_mut()) {
                     run.tick(now);
@@ -402,7 +428,7 @@ impl App {
             [first, rest @ ..] => self.notify(Level::Warn, format!("{first} (+{} more)", rest.len())),
         }
         self.refilter(keep.as_deref());
-        self.validation_cmds()
+        self.validation_cmds(None)
     }
 
     fn on_env(
@@ -418,7 +444,7 @@ impl App {
         match bpftrace {
             Ok((info, strategy)) => {
                 t.bpftrace = BpftraceState::Ready { info, strategy };
-                self.validation_cmds()
+                self.validation_cmds(Some(target))
             }
             Err(reason) => {
                 let label = t.label.clone();
@@ -436,10 +462,12 @@ impl App {
         }
     }
 
-    /// Validate every pending script on every target that can take it.
-    fn validation_cmds(&self) -> Vec<Cmd> {
+    /// Validate every pending script on every target that can take it (or only on `only`,
+    /// which just became ready: the others already have theirs in flight).
+    fn validation_cmds(&self, only: Option<TargetId>) -> Vec<Cmd> {
         let mut cmds = Vec::new();
-        for t in self.targets.iter().filter(|t| t.usable()) {
+        let targets = self.targets.iter().filter(|t| only.is_none_or(|id| id == t.id));
+        for t in targets.filter(|t| t.usable()) {
             cmds.extend(
                 self.entries
                     .iter()
@@ -482,6 +510,7 @@ impl App {
                 Context::Filter => self.edit_query(key),
                 Context::LogFilter => self.log_filter_key(key),
                 Context::Form => self.form_key(key),
+                Context::Connect => self.connect_key(key),
                 _ => {}
             }
             return Vec::new();
@@ -503,6 +532,7 @@ impl App {
             Context::Form => self.form_action(action),
             Context::Confirm => self.confirm_action(action),
             Context::Ask => self.ask_action(action),
+            Context::Connect => self.connect_action(action),
             Context::Run | Context::LogFilter => self.run_action(action),
         }
     }
@@ -552,6 +582,8 @@ impl App {
             Action::Expand => self.expand(),
             Action::PrevTarget => self.switch_target(-1),
             Action::NextTarget => self.switch_target(1),
+            Action::Connect => self.open_connect(),
+            Action::Disconnect => return self.request_disconnect(),
             Action::ShowRun => {
                 if self.active_run().is_some() {
                     self.screen = Screen::Run;
@@ -730,6 +762,9 @@ pub(crate) mod fixtures {
     use crate::bpftrace::Version;
     use crate::bpftrace::validate::{ProbeCheck, Verdict};
     use crate::discovery::{self, ScriptFile};
+    use crate::remote::Dest;
+    use crate::remote::connect::{Check, CheckStatus};
+    use crate::remote::facts::RemoteInfo;
     use crate::source::Origin;
     use crate::sys::{Lockdown, Privilege};
 
@@ -798,6 +833,66 @@ pub(crate) mod fixtures {
                 })
                 .collect(),
         }
+    }
+
+    pub fn type_text(app: &mut App, text: &str) {
+        for c in text.chars() {
+            app.update(Msg::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)));
+        }
+    }
+
+    pub fn press(app: &mut App, code: KeyCode) -> Vec<Cmd> {
+        app.update(Msg::Key(KeyEvent::new(code, KeyModifiers::NONE)))
+    }
+
+    /// `c`, type `host`, Enter: the dialog is checking. Returns the attempt id.
+    pub fn start_connect(app: &mut App, host: &str) -> u64 {
+        press(app, KeyCode::Char('c'));
+        type_text(app, host);
+        match press(app, KeyCode::Enter).as_slice() {
+            [Cmd::Connect { attempt, .. }] => *attempt,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    pub fn checks() -> Vec<Check> {
+        let ok = |t: &str| Check {
+            status: CheckStatus::Ok,
+            text: t.into(),
+        };
+        vec![
+            ok("ssh: connected as ops · 140 ms"),
+            ok("host: Rocky Linux 9.4 (Blue Onyx) · x86_64 · 5.14.0-427.13.1.el9_4.x86_64"),
+            ok("shell: sh, mktemp, head, setsid"),
+            ok("root: sudo -n works"),
+        ]
+    }
+
+    /// Connect to `host` with every check passing; returns the commands of `Connected`.
+    pub fn connect(app: &mut App, host: &str) -> Vec<Cmd> {
+        let attempt = start_connect(app, host);
+        let target = app.next_target_id - 1;
+        for check in checks() {
+            app.update(Msg::ConnectCheck { attempt, check });
+        }
+        app.update(Msg::Connected {
+            attempt,
+            target,
+            dest: Dest::parse(host, "").expect("host"),
+            info: RemoteInfo {
+                user: "ops".into(),
+                os: "Rocky Linux 9.4 (Blue Onyx)".into(),
+                arch: "x86_64".into(),
+                privilege: "root via sudo".into(),
+                btf: true,
+            },
+            host: SystemInfo {
+                privilege: Privilege::Root,
+                lockdown: Lockdown::None,
+                kernel_release: "5.14.0-427.13.1.el9_4.x86_64".into(),
+            },
+            bpftrace: bpftrace(),
+        })
     }
 
     /// Loaded, bpftrace detected, every script validated except `shebang_no_ext` (pending).

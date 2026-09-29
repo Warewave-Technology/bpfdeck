@@ -1,6 +1,8 @@
 //! Remote targets over SSH, agentless (D-020, docs/design-remote.md): nothing is installed
 //! on the host; a fixed POSIX sh runner is sent over `ssh host sh -s` per operation.
 
+pub mod connect;
+pub mod facts;
 pub mod session;
 
 /// Name of the script inside the runner's temp dir; bpftrace runs there (runner.sh).

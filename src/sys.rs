@@ -55,7 +55,7 @@ pub fn detect() -> SystemInfo {
 }
 
 /// Root wins; otherwise CAP_BPF+CAP_PERFMON (5.8+) or CAP_SYS_ADMIN (older kernels).
-fn privilege(is_root: bool, cap_eff: Option<u64>) -> Privilege {
+pub(crate) fn privilege(is_root: bool, cap_eff: Option<u64>) -> Privilege {
     let has = |cap: u32| cap_eff.is_some_and(|c| c & (1 << cap) != 0);
     if is_root {
         Privilege::Root
@@ -73,7 +73,7 @@ fn parse_cap_eff(status: &str) -> Option<u64> {
 }
 
 /// `none [integrity] confidentiality`: the bracketed word is the active mode.
-fn parse_lockdown(content: &str) -> Lockdown {
+pub(crate) fn parse_lockdown(content: &str) -> Lockdown {
     let active = content
         .split_whitespace()
         .find_map(|w| w.strip_prefix('[')?.strip_suffix(']'));

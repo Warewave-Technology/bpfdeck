@@ -8,10 +8,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
 
 use super::theme::Theme;
-use crate::app::{App, Ask, Confirm, ValidationState};
+use crate::app::{App, Ask, Confirm, ConnectField, ConnectForm, ConnectPhase, SudoMode, ValidationState};
 use crate::bpftrace::command;
 use crate::bpftrace::validate::Verdict;
 use crate::model::form::{FieldKind, ParamForm};
+use crate::remote::connect::CheckStatus;
 use crate::sys::Privilege;
 
 const LABEL: usize = 10;
@@ -205,4 +206,148 @@ pub fn draw_ask(frame: &mut Frame, area: Rect, ask: &Ask) {
         ]),
     ];
     popup(frame, area, " Confirm ".into(), lines, 64);
+}
+
+pub fn draw_connect(frame: &mut Frame, area: Rect, form: &ConnectForm) {
+    let editing = form.phase != ConnectPhase::Checking;
+    let row = |field: ConnectField, label: &str, value: Vec<Span<'static>>, help: &str| {
+        let focused = editing && form.focus == field;
+        let mut spans = vec![
+            Span::styled(if focused { "› " } else { "  " }, Theme::key_hint()),
+            Span::styled(
+                format!("{label:<10}"),
+                if focused { Theme::title() } else { Theme::label() },
+            ),
+        ];
+        spans.extend(value);
+        if !help.is_empty() {
+            spans.push(Span::styled(format!("  {help}"), Theme::muted()));
+        }
+        Line::from(spans)
+    };
+    let text = |field: ConnectField, value: String, empty: &str| {
+        if editing && form.focus == field {
+            vec![Span::styled(format!("{value}█"), Theme::selected())]
+        } else if value.is_empty() {
+            vec![Span::styled(empty.to_string(), Theme::muted())]
+        } else {
+            vec![Span::raw(value)]
+        }
+    };
+    let mut radios = Vec::new();
+    for mode in SudoMode::ALL {
+        let on = form.sudo == mode;
+        let style = if on && editing && form.focus == ConnectField::Sudo {
+            Theme::selected()
+        } else if on {
+            Theme::title()
+        } else {
+            Theme::base()
+        };
+        radios.push(Span::styled(
+            format!("({}) {}", if on { "•" } else { " " }, mode.label()),
+            style,
+        ));
+        radios.push(Span::raw("   "));
+    }
+    let mut lines = vec![
+        row(
+            ConnectField::Host,
+            "Host",
+            text(ConnectField::Host, form.host.clone(), ""),
+            "IP, hostname, user@host or ~/.ssh/config alias",
+        ),
+        row(
+            ConnectField::Port,
+            "Port",
+            text(ConnectField::Port, form.port.clone(), "default"),
+            "",
+        ),
+        row(ConnectField::Sudo, "sudo", radios, ""),
+    ];
+    if form.sudo == SudoMode::Password {
+        lines.push(row(
+            ConnectField::Password,
+            "Password",
+            text(ConnectField::Password, "•".repeat(form.password.len()), ""),
+            "kept in memory while connected",
+        ));
+    }
+    lines.push(row(
+        ConnectField::Bpftrace,
+        "bpftrace",
+        text(
+            ConnectField::Bpftrace,
+            form.bpftrace.clone(),
+            "found in root's PATH",
+        ),
+        "",
+    ));
+
+    if !form.checks.is_empty() || form.phase == ConnectPhase::Checking {
+        lines.push(Line::raw(""));
+    }
+    for check in &form.checks {
+        let (glyph, style) = match check.status {
+            CheckStatus::Ok => ("✓", Theme::ok()),
+            CheckStatus::Warn => ("!", Theme::warn()),
+            CheckStatus::Fail => ("✗", Theme::error()),
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {glyph} "), style),
+            Span::styled(
+                check.text.clone(),
+                if check.status == CheckStatus::Fail {
+                    Theme::error()
+                } else {
+                    Theme::base()
+                },
+            ),
+        ]));
+    }
+    let hint = |pairs: &[(&str, &str)]| {
+        let mut spans = vec![Span::raw("  ")];
+        for (i, (key, what)) in pairs.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(" · ", Theme::muted()));
+            }
+            spans.push(Span::styled(key.to_string(), Theme::key_hint()));
+            spans.push(Span::raw(format!(" {what}")));
+        }
+        Line::from(spans)
+    };
+    match &form.phase {
+        ConnectPhase::Checking => {
+            lines.push(Line::styled("  … checking", Theme::running()));
+            lines.push(Line::raw(""));
+            lines.push(hint(&[("Esc", "cancel")]));
+        }
+        ConnectPhase::NeedsAuth(message) => {
+            lines.push(Line::raw(""));
+            lines.push(Line::styled(format!("  ! ssh needs you: {message}"), Theme::warn()));
+            lines.push(Line::styled(
+                "    bpfdeck suspends and runs ssh in the terminal, where it can ask for a \
+                 passphrase, password or host key; bpfdeck never sees them.",
+                Theme::muted(),
+            ));
+            lines.push(Line::raw(""));
+            lines.push(hint(&[
+                ("Enter", "authenticate in the terminal"),
+                ("Esc", "cancel"),
+            ]));
+        }
+        ConnectPhase::Editing => {
+            if let Some(e) = &form.error {
+                lines.push(Line::raw(""));
+                lines.push(Line::styled(format!("  {e}"), Theme::error()));
+            }
+            lines.push(Line::raw(""));
+            lines.push(hint(&[
+                ("Enter", "connect"),
+                ("Tab", "next field"),
+                ("Esc", "cancel"),
+            ]));
+        }
+    }
+    popup(frame, area, " Connect to a host ".into(), lines, 96);
 }

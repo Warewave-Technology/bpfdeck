@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::target::Conn;
+use super::target::{Conn, TargetId};
 use super::{App, BpftraceState, Level, Overlay, Screen, ValidationState};
 use crate::bpftrace::coalesce::Batch;
 use crate::bpftrace::command::{self, CommandError, NamedArg, RunArgs};
@@ -68,6 +68,10 @@ pub enum Ask {
     QuitWhileRunning {
         running: String,
     },
+    DisconnectWhileRunning {
+        target: TargetId,
+        running: String,
+    },
 }
 
 impl Ask {
@@ -75,6 +79,9 @@ impl Ask {
         match self {
             Self::StopForNewRun { running } => format!("{running} is still running. Stop it?"),
             Self::QuitWhileRunning { running } => format!("{running} still running. Stop and quit?"),
+            Self::DisconnectWhileRunning { running, .. } => {
+                format!("{running} is still running. Stop it and disconnect?")
+            }
         }
     }
 }
@@ -292,6 +299,7 @@ impl App {
                 );
                 cmds
             }
+            Ask::DisconnectWhileRunning { target, .. } => self.disconnect(target),
             Ask::QuitWhileRunning { .. } => {
                 self.quit_after_run = true;
                 let cmds: Vec<Cmd> = (0..self.targets.len()).flat_map(|i| self.stop_run(i)).collect();

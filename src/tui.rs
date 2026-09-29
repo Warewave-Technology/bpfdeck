@@ -2,6 +2,7 @@
 //! the executor that performs `Cmd`s (docs/architecture.md, "Concurrency model").
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -24,7 +25,9 @@ use crate::bpftrace::runner::{self, Escalation, RunEvent, RunHandle};
 use crate::bpftrace::validate::{self, Strategy, Validator};
 use crate::model::log;
 use crate::msg::{Cmd, Msg};
-use crate::remote::session::Backend;
+use crate::remote::Dest;
+use crate::remote::connect::{self, Failure, SudoChoice};
+use crate::remote::session::{Backend, SshTarget, Sudo};
 use crate::{bpftrace, catalog, source, sys, ui};
 
 const CHANNEL_CAPACITY: usize = 1024;
@@ -35,7 +38,7 @@ const TICK: Duration = Duration::from_millis(250);
 /// from starving the screen and the keyboard.
 const FRAME_BUDGET: Duration = Duration::from_millis(30);
 
-pub async fn run(input: String, bpftrace_path: PathBuf, export_dir: PathBuf) -> Result<()> {
+pub async fn run(input: String, bpftrace_path: PathBuf, export_dir: PathBuf, ssh: OsString) -> Result<()> {
     let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
     // Keys and signals get their own channel so they are never stuck behind run output.
     let (input_tx, mut input_rx) = mpsc::channel(CHANNEL_CAPACITY);
@@ -57,9 +60,14 @@ pub async fn run(input: String, bpftrace_path: PathBuf, export_dir: PathBuf) -> 
         input_gate,
         runs: HashMap::new(),
         export_dir,
+        ssh,
+        remotes: Arc::new(Mutex::new(HashMap::new())),
+        connecting: HashMap::new(),
     };
     let result = event_loop(&mut terminal, &mut app, &mut exec, &mut input_rx, &mut rx).await;
-    // Dropping the handle kills a still running bpftrace (its whole process group).
+    // Dropping a run handle kills a still running bpftrace (its whole process group; for a
+    // remote run the local ssh, and EOF makes the runner stop bpftrace on the host).
+    exec.shutdown().await;
     drop(exec);
     stop_input.store(true, Ordering::Release);
     ratatui::restore();
@@ -157,6 +165,12 @@ struct Executor {
     runs: HashMap<TargetId, ActiveRun>,
     /// Where `w` writes exports (`--export-dir`).
     export_dir: PathBuf,
+    /// The ssh binary (`--ssh`, for tests).
+    ssh: OsString,
+    /// Connected hosts; filled by the connect task before `Msg::Connected`.
+    remotes: Arc<Mutex<HashMap<TargetId, Arc<SshTarget>>>>,
+    /// Connect attempts in flight: the task and the target whose master it may open.
+    connecting: HashMap<u64, (tokio::task::JoinHandle<()>, SshTarget)>,
 }
 
 struct ActiveRun {
@@ -282,8 +296,29 @@ impl Executor {
                 target,
                 run_id,
                 argv,
-                script: _,
-            } => self.start_run(target, run_id, &argv),
+                script,
+            } => self.start_run(target, run_id, &argv, &script),
+            Cmd::Connect {
+                attempt,
+                target,
+                dest,
+                sudo,
+                bpftrace,
+                interactive,
+            } => self.connect(attempt, target, dest, sudo, bpftrace, interactive, terminal),
+            Cmd::CancelConnect { attempt } => {
+                if let Some((task, base)) = self.connecting.remove(&attempt) {
+                    task.abort();
+                    tokio::spawn(async move { connect::close_master(&base).await });
+                }
+            }
+            Cmd::Disconnect { target } => {
+                self.runs.remove(&target);
+                lock(&self.validators).remove(&target);
+                if let Some(remote) = lock(&self.remotes).remove(&target) {
+                    tokio::spawn(async move { connect::close_master(&remote).await });
+                }
+            }
             Cmd::StopRun { target, run_id } => {
                 if let Some(run) = self.runs.get_mut(&target).filter(|r| r.id == run_id) {
                     run.handle.stop();
@@ -323,9 +358,9 @@ impl Executor {
         Ok(())
     }
 
-    /// Spawn bpftrace and forward its events (plus a tick for the elapsed time) as `Msg`s
-    /// until it exits.
-    fn start_run(&mut self, target: TargetId, run_id: u64, argv: &[std::ffi::OsString]) {
+    /// Spawn bpftrace (locally, or on the host with `script` copied there) and forward
+    /// its events (plus a tick for the elapsed time) as `Msg`s until it exits.
+    fn start_run(&mut self, target: TargetId, run_id: u64, argv: &[OsString], script: &Path) {
         let tx = self.tx.clone();
         // The target's previous run is over (one at a time per target): drop it and its spool.
         self.runs.remove(&target);
@@ -335,14 +370,26 @@ impl Executor {
             path,
             cap: runner::SPOOL_CAP,
         });
-        let handle = match runner::spawn(argv, events_tx, Escalation::default(), spool.as_ref()) {
-            Ok(handle) => handle,
-            Err(e) => {
+        let remote = lock(&self.remotes).get(&target).cloned();
+        let started = match remote {
+            Some(remote) => std::fs::read(script)
+                .map_err(|e| format!("cannot read {}: {e}", script.display()))
+                .and_then(|content| {
+                    remote
+                        .start_run(argv, &content, events_tx, Escalation::default(), spool)
+                        .map_err(|e| format!("{}: {e}", remote.dest.label()))
+                }),
+            None => runner::spawn(argv, events_tx, Escalation::default(), spool.as_ref()).map_err(|e| {
                 let program = argv
                     .first()
                     .map(|p| p.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                let reason = format!("cannot run {program}: {e}");
+                format!("cannot run {program}: {e}")
+            }),
+        };
+        let handle = match started {
+            Ok(handle) => handle,
+            Err(reason) => {
                 tokio::spawn(async move {
                     let _ = tx.send(Msg::RunFailed { run_id, reason }).await;
                 });
@@ -358,6 +405,145 @@ impl Executor {
             },
         );
         tokio::spawn(forward_run(run_id, events, tx, TICK));
+    }
+
+    /// Run the connect checks in the background. `interactive`: first open the SSH master
+    /// in the plain terminal (TUI suspended, like the editor), so SSH can ask for a
+    /// passphrase, password or host key confirmation itself; bpfdeck never sees them.
+    #[allow(clippy::too_many_arguments)]
+    fn connect(
+        &mut self,
+        attempt: u64,
+        target: TargetId,
+        dest: Dest,
+        sudo: SudoChoice,
+        bpftrace: Option<String>,
+        interactive: bool,
+        terminal: &mut DefaultTerminal,
+    ) {
+        let tx = self.tx.clone();
+        let dir = match connect::control_dir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                let _ = tx.try_send(Msg::ConnectFailed {
+                    attempt,
+                    reason: Some(e),
+                });
+                return;
+            }
+        };
+        let base = SshTarget {
+            dest: dest.clone(),
+            ssh: self.ssh.clone(),
+            control_path: dir.join("%C"),
+            sudo: Sudo::None,
+        };
+        let log = connect::master_log(&dir, attempt);
+        if interactive {
+            let opened = tokio::task::block_in_place(|| self.master_in_terminal(&base, &log, terminal));
+            if let Err(e) = opened {
+                let _ = tx.try_send(Msg::ConnectFailed {
+                    attempt,
+                    reason: Some(format!("{e:#}")),
+                });
+                return;
+            }
+        }
+        self.connecting.retain(|_, (task, _)| !task.is_finished());
+        let (remotes, validators) = (self.remotes.clone(), self.validators.clone());
+        let task_base = base.clone();
+        let task = tokio::spawn(async move {
+            // Checks go out in order, before the final message.
+            let (report, mut checks) = mpsc::channel(16);
+            let forward_tx = tx.clone();
+            let forward = tokio::spawn(async move {
+                while let Some(check) = checks.recv().await {
+                    let _ = forward_tx.send(Msg::ConnectCheck { attempt, check }).await;
+                }
+            });
+            let result = connect::connect(task_base, sudo, bpftrace, &log, interactive, &report).await;
+            drop(report);
+            let _ = forward.await;
+            let msg = match result {
+                Ok(c) => {
+                    let strategy = Strategy::choose(&c.bpftrace, c.system.privilege);
+                    let validator = Validator::new(
+                        Backend::Ssh(c.target.clone()),
+                        &c.bpftrace,
+                        &c.system.kernel_release,
+                        strategy,
+                        validate::DEFAULT_WORKERS,
+                        validate::DEFAULT_TIMEOUT,
+                    );
+                    lock(&validators).insert(target, Arc::new(validator));
+                    lock(&remotes).insert(target, c.target);
+                    Msg::Connected {
+                        attempt,
+                        target,
+                        dest,
+                        info: c.info,
+                        host: c.system,
+                        bpftrace: (c.bpftrace, strategy),
+                    }
+                }
+                Err(Failure::NeedsAuth(message)) => Msg::ConnectNeedsAuth { attempt, message },
+                Err(Failure::Failed) => Msg::ConnectFailed {
+                    attempt,
+                    reason: None,
+                },
+            };
+            let _ = tx.send(msg).await;
+        });
+        self.connecting.insert(attempt, (task, base));
+    }
+
+    /// `ssh -fN` without BatchMode, in the plain terminal.
+    fn master_in_terminal(&self, base: &SshTarget, log: &Path, terminal: &mut DefaultTerminal) -> Result<()> {
+        let argv = base.master_argv(false, log);
+        let _input_paused = self.input_gate.lock().unwrap_or_else(|e| e.into_inner());
+        ratatui::restore();
+        println!(
+            "bpfdeck: connecting to {}. ssh may ask for a passphrase, password or host key confirmation.",
+            base.dest.label()
+        );
+        let status = Command::new(&argv[0])
+            .args(&argv[1..])
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status();
+        let resumed = resume(terminal);
+        let message = std::fs::read_to_string(log).unwrap_or_default();
+        let _ = std::fs::remove_file(log);
+        resumed?;
+        let status = status.with_context(|| format!("cannot run {}", base.ssh.to_string_lossy()))?;
+        if !status.success() {
+            let last = message
+                .lines()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or_default();
+            anyhow::bail!(
+                "ssh exited with {status}{}{last}",
+                if last.is_empty() { "" } else { ": " }
+            );
+        }
+        Ok(())
+    }
+
+    /// Stop runs and close every SSH master (quitting).
+    async fn shutdown(&mut self) {
+        self.runs.clear();
+        for (task, _) in self.connecting.values() {
+            task.abort();
+        }
+        let mut masters: Vec<SshTarget> = lock(&self.remotes).drain().map(|(_, r)| (*r).clone()).collect();
+        masters.extend(self.connecting.drain().map(|(_, (_, base))| base));
+        let mut closing = tokio::task::JoinSet::new();
+        for master in masters {
+            closing.spawn(async move { connect::close_master(&master).await });
+        }
+        closing.join_all().await;
     }
 
     /// Suspend the TUI, run `$VISUAL`/`$EDITOR` (split on whitespace, no shell), resume.

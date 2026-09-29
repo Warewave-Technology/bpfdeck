@@ -12,6 +12,9 @@ use crate::bpftrace::BpftraceInfo;
 use crate::bpftrace::coalesce::Batch;
 use crate::bpftrace::validate::{Strategy, Validation, ValidationRequest};
 use crate::catalog::Catalog;
+use crate::remote::Dest;
+use crate::remote::connect::{Check, SudoChoice};
+use crate::remote::facts::RemoteInfo;
 use crate::source::ResolvedSource;
 use crate::sys::SystemInfo;
 
@@ -63,6 +66,30 @@ pub enum Msg {
     Tick(Instant),
     /// Result of `Cmd::ExportRun`: the files written.
     Exported(Result<Vec<PathBuf>, String>),
+    /// One connect check finished.
+    ConnectCheck {
+        attempt: u64,
+        check: Check,
+    },
+    /// SSH needs a person (password, passphrase, host key): offer the terminal.
+    ConnectNeedsAuth {
+        attempt: u64,
+        message: String,
+    },
+    /// The attempt ended; the failed check was reported, `reason` is anything else.
+    ConnectFailed {
+        attempt: u64,
+        reason: Option<String>,
+    },
+    /// All checks passed; the executor has the session and a validator for `target`.
+    Connected {
+        attempt: u64,
+        target: TargetId,
+        dest: Dest,
+        info: RemoteInfo,
+        host: SystemInfo,
+        bpftrace: (BpftraceInfo, Strategy),
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,4 +125,18 @@ pub enum Cmd {
         host: Option<String>,
         text: String,
     },
+    /// Open the SSH master for `target` and run the connect checks. `interactive`: open
+    /// the master in the plain terminal first (TUI suspended), so SSH can ask questions.
+    Connect {
+        attempt: u64,
+        target: TargetId,
+        dest: Dest,
+        sudo: SudoChoice,
+        bpftrace: Option<String>,
+        interactive: bool,
+    },
+    /// Abandon a connect attempt (and close its master if it got that far).
+    CancelConnect { attempt: u64 },
+    /// Stop the target's run (EOF on the host), drop its validator, close the master.
+    Disconnect { target: TargetId },
 }

@@ -68,6 +68,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Some(Overlay::Params { script_id, form }) => modals::draw_form(frame, main, script_id, form),
         Some(Overlay::Confirm(confirm)) => modals::draw_confirm(frame, main, app, confirm),
         Some(Overlay::Ask(ask)) => modals::draw_ask(frame, main, ask),
+        Some(Overlay::Connect(form)) => modals::draw_connect(frame, main, form),
         None => {}
     }
 }
@@ -154,10 +155,13 @@ fn env_spans(app: &App) -> Vec<Span<'static>> {
         BpftraceState::Missing(_) => spans.push(Span::styled("no bpftrace", Theme::badge_error())),
     }
     if let Some(host) = &t.host {
-        spans.push(Span::styled(
-            format!(" · {} · ", host.kernel_release),
-            Theme::status_bar(),
-        ));
+        // Remote kernel releases are long and already in the results tab title.
+        let kernel = if t.is_remote() {
+            " · ".to_string()
+        } else {
+            format!(" · {} · ", host.kernel_release)
+        };
+        spans.push(Span::styled(kernel, Theme::status_bar()));
         spans.push(match host.privilege {
             Privilege::Root => Span::styled("root", Theme::badge_ok()),
             Privilege::Caps => Span::styled("caps", Theme::badge_warn()),
@@ -242,6 +246,48 @@ mod tests {
         let lines = app.selected().map_or(0, |e| e.script.content.lines().count());
         assert_eq!(usize::from(app.scroll.get()), lines - 18);
         insta::assert_snapshot!(backend);
+    }
+
+    #[test]
+    fn connect_dialog_checking_80x24() {
+        let mut app = ready();
+        let attempt = start_connect(&mut app, "ops@10.0.3.14");
+        for check in checks() {
+            app.update(Msg::ConnectCheck { attempt, check });
+        }
+        insta::assert_snapshot!(render(&app, 80, 24));
+    }
+
+    #[test]
+    fn connect_dialog_password_and_failure_120x40() {
+        let mut app = ready();
+        keys(&mut app, &[KeyCode::Char('c')]);
+        type_text(&mut app, "db-02");
+        keys(&mut app, &[KeyCode::Tab, KeyCode::Tab, KeyCode::Left]);
+        keys(&mut app, &[KeyCode::Tab]);
+        type_text(&mut app, "secret");
+        let attempt = match press(&mut app, KeyCode::Enter).as_slice() {
+            [crate::msg::Cmd::Connect { attempt, .. }] => *attempt,
+            other => panic!("{other:?}"),
+        };
+        let mut checks = checks();
+        checks.truncate(3);
+        checks.push(crate::remote::connect::Check {
+            status: crate::remote::connect::CheckStatus::Fail,
+            text: "root: the sudo password was not accepted".into(),
+        });
+        for check in checks {
+            app.update(Msg::ConnectCheck { attempt, check });
+        }
+        app.update(Msg::ConnectFailed { attempt, reason: None });
+        insta::assert_snapshot!(render(&app, 120, 40));
+    }
+
+    #[test]
+    fn remote_tab_active_120x40() {
+        let mut app = ready();
+        connect(&mut app, "ops@10.0.3.14");
+        insta::assert_snapshot!(render(&app, 120, 40));
     }
 
     #[test]

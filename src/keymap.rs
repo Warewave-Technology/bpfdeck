@@ -15,6 +15,8 @@ pub enum Context {
     Confirm,
     /// Yes/no question.
     Ask,
+    /// Connect dialog (unbound printable keys go to the focused field).
+    Connect,
     /// Run view: header + event log.
     Run,
     /// Typing a log filter.
@@ -23,12 +25,13 @@ pub enum Context {
 }
 
 impl Context {
-    pub const ALL: [Context; 8] = [
+    pub const ALL: [Context; 9] = [
         Self::Browser,
         Self::Filter,
         Self::Form,
         Self::Confirm,
         Self::Ask,
+        Self::Connect,
         Self::Run,
         Self::LogFilter,
         Self::Help,
@@ -41,6 +44,7 @@ impl Context {
             Self::Form => "Parameters",
             Self::Confirm => "Run confirmation",
             Self::Ask => "Question",
+            Self::Connect => "Connect to a host",
             Self::Run => "Run view",
             Self::LogFilter => "Log filter",
             Self::Help => "Help",
@@ -88,6 +92,12 @@ pub enum Action {
     Expand,
     PrevTarget,
     NextTarget,
+    /// Open the connect dialog.
+    Connect,
+    /// Close the active remote target.
+    Disconnect,
+    PrevChoice,
+    NextChoice,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -143,7 +153,7 @@ const fn bind(
     }
 }
 
-use Context::{Ask, Browser, Confirm, Filter, Form, Help, LogFilter, Run};
+use Context::{Ask, Browser, Confirm, Connect, Filter, Form, Help, LogFilter, Run};
 use KeyCode::{BackTab, Down, End, Enter, Esc, Home, Left, PageDown, PageUp, Right, Tab, Up};
 
 #[rustfmt::skip]
@@ -157,7 +167,9 @@ pub const BINDINGS: &[Binding] = &[
     bind(Browser, &[ch('t')], "t", Action::ToggleTree, "tree / flat list", None),
     bind(Browser, &[ch('<')], "<", Action::PrevTarget, "previous target tab", None),
     bind(Browser, &[ch('>')], ">", Action::NextTarget, "next target tab", None),
-    bind(Browser, &[ch('h'), key(Left)], "h/←", Action::Collapse, "collapse dir / go to parent", None),
+    bind(Browser, &[ch('c'), ch('+')], "c/+", Action::Connect, "connect to a host", None),
+    bind(Browser, &[ch('d')], "d", Action::Disconnect, "disconnect this host", None),
+    bind(Browser, &[ch('h'), key(Left)], "h/←", Action::Collapse, "collapse dir / to parent", None),
     bind(Browser, &[ch('l'), key(Right)], "l/→", Action::Expand, "expand dir", None),
     bind(Browser, &[key(Tab)], "Tab", Action::NextTab, "next detail tab", None),
     bind(Browser, &[key(BackTab)], "S-Tab", Action::PrevTab, "previous detail tab", None),
@@ -187,6 +199,13 @@ pub const BINDINGS: &[Binding] = &[
     bind(Confirm, &[ch('u')], "u", Action::ToggleUnsafe, "toggle --unsafe (if needed)", None),
     bind(Confirm, &[key(Esc), ch('q')], "Esc", Action::Close, "cancel", Some("cancel")),
 
+    bind(Connect, &[key(Tab), key(Down)], "Tab/↓", Action::NextField, "next field", Some("next")),
+    bind(Connect, &[key(BackTab), key(Up)], "S-Tab/↑", Action::PrevField, "previous field", None),
+    bind(Connect, &[key(Left)], "←", Action::PrevChoice, "sudo: previous choice", None),
+    bind(Connect, &[key(Right)], "→", Action::NextChoice, "sudo: next choice", None),
+    bind(Connect, &[key(Enter)], "Enter", Action::Submit, "connect / auth in terminal", Some("connect")),
+    bind(Connect, &[key(Esc)], "Esc", Action::Close, "cancel", Some("cancel")),
+
     bind(Ask, &[ch('y')], "y", Action::Yes, "yes", Some("yes")),
     bind(Ask, &[ch('n'), key(Esc)], "n/Esc", Action::No, "no", Some("no")),
 
@@ -202,6 +221,8 @@ pub const BINDINGS: &[Binding] = &[
     bind(Run, &[ch('z')], "z", Action::ToggleFullWidth, "maximize results", None),
     bind(Run, &[ch('<')], "<", Action::PrevTarget, "previous target tab", None),
     bind(Run, &[ch('>')], ">", Action::NextTarget, "next target tab", None),
+    bind(Run, &[ch('c'), ch('+')], "c/+", Action::Connect, "connect to a host", None),
+    bind(Run, &[ch('d')], "d", Action::Disconnect, "disconnect this host", None),
     bind(Run, &[key(Tab)], "Tab", Action::NextTab, "next panel", Some("panel")),
     bind(Run, &[key(BackTab)], "S-Tab", Action::PrevTab, "previous panel", None),
     bind(Run, &[ch('[')], "[", Action::PrevKey, "previous key (keyed hist)", None),
@@ -276,7 +297,10 @@ mod tests {
             Some(Action::Bottom)
         );
         assert_eq!(lookup(Browser, &ev(KeyCode::Char('c'), ctrl)), Some(Action::Quit));
-        assert_eq!(lookup(Browser, &ev(KeyCode::Char('c'), none)), None);
+        assert_eq!(
+            lookup(Browser, &ev(KeyCode::Char('c'), none)),
+            Some(Action::Connect)
+        );
         assert_eq!(
             lookup(Browser, &ev(KeyCode::Char('3'), none)),
             Some(Action::Tab(2))

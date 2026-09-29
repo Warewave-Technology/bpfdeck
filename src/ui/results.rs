@@ -79,6 +79,7 @@ fn target_summary(t: &Target) -> String {
     if let Some(r) = &t.remote {
         parts.push(r.os.clone());
     }
+    parts.retain(|p| !p.is_empty());
     format!(" {} ", parts.join(" · "))
 }
 
