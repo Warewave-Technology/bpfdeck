@@ -96,5 +96,6 @@ M7 done: remote targets over SSH, agentless (docs/design-remote.md, D-020…D-02
 `tests/realhost/sshd.sh`. Inline editing with session drafts (D-025).
 M8 fleet mode (docs/design-fleet.md, D-024): F1 done (host lists, parallel connect),
 F2 done (validation per target, disagreement count), F3 done (target checklist,
-`FleetRun`, `X`). Next: F4 (compare tab, `model/compare.rs`).
+`FleetRun`, `X`), F4 done (compare tab, `model/compare.rs`). Next: F5 (fleet export,
+end-to-end with 3 sshd containers).
 Open: RHEL/Debian 12 host checks. Remote `origin` is set; nothing pushed until release.

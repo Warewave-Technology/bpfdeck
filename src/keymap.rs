@@ -19,6 +19,8 @@ pub enum Context {
     Connect,
     /// Inline script editor (unbound keys edit the text).
     Editor,
+    /// The fleet run's compare tab.
+    Compare,
     /// Run view: header + event log.
     Run,
     /// Typing a log filter.
@@ -27,7 +29,7 @@ pub enum Context {
 }
 
 impl Context {
-    pub const ALL: [Context; 10] = [
+    pub const ALL: [Context; 11] = [
         Self::Browser,
         Self::Filter,
         Self::Form,
@@ -36,6 +38,7 @@ impl Context {
         Self::Connect,
         Self::Editor,
         Self::Run,
+        Self::Compare,
         Self::LogFilter,
         Self::Help,
     ];
@@ -49,6 +52,7 @@ impl Context {
             Self::Ask => "Question",
             Self::Connect => "Connect to a host",
             Self::Editor => "Editing a script",
+            Self::Compare => "Compare (fleet run)",
             Self::Run => "Run view",
             Self::LogFilter => "Log filter",
             Self::Help => "Help",
@@ -110,6 +114,8 @@ pub enum Action {
     SelectValidated,
     /// Stop a fleet run on all its targets.
     StopAll,
+    /// Compare tab: merged histograms or a row per host.
+    Merge,
     /// Switch between the original and the edited version.
     ToggleOriginal,
     Undo,
@@ -168,7 +174,7 @@ const fn bind(
     }
 }
 
-use Context::{Ask, Browser, Confirm, Connect, Editor, Filter, Form, Help, LogFilter, Run};
+use Context::{Ask, Browser, Compare, Confirm, Connect, Editor, Filter, Form, Help, LogFilter, Run};
 use KeyCode::{BackTab, Down, End, Enter, Esc, Home, Left, PageDown, PageUp, Right, Tab, Up};
 
 #[rustfmt::skip]
@@ -256,6 +262,20 @@ pub const BINDINGS: &[Binding] = &[
     bind(Run, &[ch('w')], "w", Action::Export, "write run to files (.txt + .ndjson)", None),
     bind(Run, &[key(Esc)], "Esc", Action::Close, "back to list, run continues", Some("back")),
     bind(Run, &[ch('?')], "?", Action::Help, "help", Some("help")),
+
+    bind(Compare, &[ch('x'), ctrl('c')], "x/C-c", Action::StopAll, "stop on every target", Some("stop all")),
+    bind(Compare, &[ch('m')], "m", Action::Merge, "histograms: merged / per host", Some("merge")),
+    bind(Compare, &[ch('s')], "s", Action::ToggleSort, "tables: sort by total / by host", Some("sort")),
+    bind(Compare, &[ch('j'), key(Down)], "j/↓", Action::Down, "next host", None),
+    bind(Compare, &[ch('k'), key(Up)], "k/↑", Action::Up, "previous host", None),
+    bind(Compare, &[key(Enter)], "Enter", Action::Submit, "open the host's tab", Some("host")),
+    bind(Compare, &[key(PageDown), ctrl('d')], "PgDn/C-d", Action::ScrollDown, "scroll down", None),
+    bind(Compare, &[key(PageUp), ctrl('u')], "PgUp/C-u", Action::ScrollUp, "scroll up", None),
+    bind(Compare, &[ch('<')], "<", Action::PrevTarget, "previous tab", None),
+    bind(Compare, &[ch('>')], ">", Action::NextTarget, "next tab", None),
+    bind(Compare, &[ch('z')], "z", Action::ToggleFullWidth, "maximize results", None),
+    bind(Compare, &[key(Esc)], "Esc", Action::Close, "back to list", Some("back")),
+    bind(Compare, &[ch('?')], "?", Action::Help, "help", Some("help")),
 
     bind(LogFilter, &[key(Enter)], "Enter", Action::AcceptFilter, "keep filter", Some("keep")),
     bind(LogFilter, &[key(Esc)], "Esc", Action::ClearFilter, "clear filter", Some("clear")),

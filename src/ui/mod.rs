@@ -1,6 +1,7 @@
 pub mod theme;
 
 mod browser;
+mod compare_view;
 mod editor_view;
 mod help;
 mod modals;
@@ -49,7 +50,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // Browser on top, results tabs at the bottom: small until there is something to show.
     // The inline editor gets the whole browser area (and the results pane stays small).
     let editing = app.editor.is_some();
-    let results_open = !editing && (app.active_run().is_some() || app.screen == Screen::Run);
+    let results_open =
+        !editing && (app.active_run().is_some() || app.compare_selected() || app.screen == Screen::Run);
     if app.full_width && results_open {
         results::draw(frame, main, app);
     } else {
@@ -420,6 +422,78 @@ mod tests {
         app.notice = None;
         keys(&mut app, &[KeyCode::Char('<'), KeyCode::Char('3')]); // missing_probe_demo on db-02
         insta::assert_snapshot!(render(&app, 120, 40));
+    }
+
+    /// Three hosts running syscount_demo as a fleet run, each fed `outputs(i)`.
+    fn fleet_app(outputs: impl Fn(usize) -> Vec<String>) -> App {
+        use crate::bpftrace::json::parse_line;
+        use crate::bpftrace::runner::RunEvent;
+        let mut app = ready();
+        for h in ["db-01", "db-02", "db-03"] {
+            connect_validated(&mut app, h, &[]);
+        }
+        keys(&mut app, &[KeyCode::Char('/')]);
+        type_text(&mut app, "sysc");
+        keys(&mut app, &[KeyCode::Enter, KeyCode::Enter]);
+        // Every validated target, then leave local out.
+        keys(
+            &mut app,
+            &[
+                KeyCode::Char('a'),
+                KeyCode::Up,
+                KeyCode::Up,
+                KeyCode::Up,
+                KeyCode::Char(' '),
+            ],
+        );
+        keys(&mut app, &[KeyCode::Enter]);
+        let t0 = std::time::Instant::now();
+        let members = app.fleet.as_ref().expect("fleet").members.clone();
+        for (i, (_, run_id)) in members.into_iter().enumerate() {
+            app.update(Msg::RunStarted { run_id, at: t0 });
+            for msg in outputs(i).iter().flat_map(|l| parse_line(l)) {
+                app.update(Msg::Run {
+                    run_id,
+                    at: t0 + std::time::Duration::from_secs(4),
+                    batch: one(RunEvent::Output(msg)),
+                });
+            }
+        }
+        app.update(Msg::Tick(t0 + std::time::Duration::from_secs(5)));
+        app.notice = None;
+        app
+    }
+
+    fn fleet_outputs(i: usize) -> Vec<String> {
+        let (p, slow) = [(1207, 5), (8205, 4), (1100, 900)][i];
+        vec![
+            r#"{"type": "attached_probes", "data": {"probes": 2}}"#.to_string(),
+            format!(
+                r#"{{"type": "map", "data": {{"@syscalls": {{"postgres": {p}, "sshd": {}, "node": 290}}}}}}"#,
+                100 + i
+            ),
+            format!(
+                r#"{{"type": "hist", "data": {{"@usecs": [{{"min": 16, "max": 31, "count": 40}}, {{"min": 32, "max": 63, "count": 50}}, {{"min": 1024, "max": 2047, "count": {slow}}}]}}}}"#
+            ),
+            format!(r#"{{"type": "map", "data": {{"@total": {}}}}}"#, 9000 + i * 10),
+        ]
+    }
+
+    #[test]
+    fn compare_tab_120x40() {
+        let app = fleet_app(fleet_outputs);
+        assert!(app.compare_selected());
+        insta::assert_snapshot!(render(&app, 120, 40));
+    }
+
+    #[test]
+    fn compare_tab_merged_sorted_80x24() {
+        let mut app = fleet_app(fleet_outputs);
+        keys(
+            &mut app,
+            &[KeyCode::Char('m'), KeyCode::Char('s'), KeyCode::Char('z')],
+        );
+        insta::assert_snapshot!(render(&app, 80, 24));
     }
 
     #[test]

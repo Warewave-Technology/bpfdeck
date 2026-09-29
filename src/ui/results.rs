@@ -7,8 +7,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph, Wrap};
 
-use super::run_view;
 use super::theme::Theme;
+use super::{compare_view, run_view};
 use crate::app::target::{Conn, Target};
 use crate::app::{App, BpftraceState, Screen};
 use crate::model::run_state::Phase;
@@ -29,11 +29,30 @@ fn tab_glyph(t: &Target) -> Option<(&'static str, Style)> {
 
 fn tab_bar(app: &App) -> Line<'static> {
     let mut spans = vec![Span::raw(" ")];
+    // The fleet run's compare tab comes first (F4).
+    if let Some(fleet) = &app.fleet {
+        let name = fleet.script_id.rsplit('/').next().unwrap_or(&fleet.script_id);
+        let name = name.strip_suffix(".bt").unwrap_or(name);
+        let label = format!("⧉ {name}");
+        let selected = app.compare_selected();
+        spans.push(Span::styled(
+            if selected { format!("[{label}]") } else { label },
+            if selected {
+                Theme::tab_active()
+            } else {
+                Theme::tab_inactive()
+            },
+        ));
+        if app.fleet_members().iter().any(|(_, r)| r.is_active()) {
+            spans.push(Span::styled(" ▶", Theme::running()));
+        }
+        spans.push(Span::styled(" │ ", Theme::border()));
+    }
     for (i, t) in app.targets.iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled(" │ ", Theme::border()));
         }
-        let active = i == app.active;
+        let active = i == app.active && !app.compare_selected();
         // A target that cannot run anything must stand out, on or off the selected tab.
         let broken = matches!(t.bpftrace, BpftraceState::Missing(_)) || matches!(t.conn, Conn::Lost(_));
         let style = match (broken, active) {
@@ -105,10 +124,26 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
         } else {
             Theme::border()
         })
-        .title(tab_bar(app))
-        .title(Line::styled(target_summary(t, summary_room(app, area)), Theme::muted()).right_aligned());
+        .title(tab_bar(app));
+    let summary = if app.compare_selected() {
+        let n = app.fleet_members().len();
+        let s = format!(" fleet run on {n} target{} ", if n == 1 { "" } else { "s" });
+        if s.chars().count() <= summary_room(app, area) {
+            s
+        } else {
+            String::new()
+        }
+    } else {
+        target_summary(t, summary_room(app, area))
+    };
+    let block = block.title(Line::styled(summary, Theme::muted()).right_aligned());
     let inner = block.inner(area);
     frame.render_widget(block, area);
+
+    if app.compare_selected() {
+        compare_view::draw(frame, inner, app);
+        return;
+    }
 
     if let Some(run) = &t.run {
         run_view::draw(frame, inner, app, run);

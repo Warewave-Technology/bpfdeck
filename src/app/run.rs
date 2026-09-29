@@ -449,6 +449,11 @@ impl App {
                 script_id: confirm.script_id.clone(),
                 members,
             });
+            // Start on the compare tab.
+            self.compare = true;
+            self.compare_view = super::CompareView::default();
+        } else {
+            self.compare = false;
         }
         self.overlay = None;
         self.screen = Screen::Run;
@@ -458,23 +463,16 @@ impl App {
     /// `X`: stop the selected tab's run on every target of its fleet run.
     fn stop_fleet(&mut self) -> Vec<Cmd> {
         let t = self.target();
-        let run_id = t.run.as_ref().map(|r| r.id);
-        let members = match (&self.fleet, run_id) {
-            (Some(f), Some(run_id)) if f.members.contains(&(t.id, run_id)) => f.members.clone(),
-            _ => return self.stop_run(self.active),
-        };
-        let mut cmds = Vec::new();
-        for (target, run_id) in members {
-            if let Some(i) = self
-                .targets
-                .iter()
-                .position(|t| t.id == target && t.run.as_ref().is_some_and(|r| r.id == run_id))
-            {
-                cmds.extend(self.stop_run(i));
-            }
+        let member = t.run.as_ref().is_some_and(|r| {
+            self.fleet
+                .as_ref()
+                .is_some_and(|f| f.members.contains(&(t.id, r.id)))
+        });
+        if member {
+            self.stop_fleet_all()
+        } else {
+            self.stop_run(self.active)
         }
-        self.notify(Level::Info, format!("stopping on {} targets", cmds.len()));
-        cmds
     }
 
     pub(super) fn ask_action(&mut self, action: Action) -> Vec<Cmd> {
@@ -530,7 +528,7 @@ impl App {
     }
 
     /// Stop the run of the target at index `i`.
-    fn stop_run(&mut self, i: usize) -> Vec<Cmd> {
+    pub(super) fn stop_run(&mut self, i: usize) -> Vec<Cmd> {
         let Some(t) = self.targets.get_mut(i) else {
             return Vec::new();
         };

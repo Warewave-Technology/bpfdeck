@@ -1102,6 +1102,33 @@ mod tests {
                 .all(|t| t.run.as_ref().is_some_and(|r| r.fleet == Some(3)))
         );
         assert_eq!((app.screen, app.target().label.as_str()), (Screen::Run, "db-03"));
+        assert!(app.compare_selected(), "a fleet run opens on its compare tab");
+
+        // Compare tab: j/k pick a host, Enter opens its tab; m and s change the view.
+        press(&mut app, KeyCode::Char('m'));
+        assert!(app.compare_view.merged);
+        let sorts: Vec<_> = (0..4)
+            .map(|_| {
+                press(&mut app, KeyCode::Char('s'));
+                app.compare_view.sort
+            })
+            .collect();
+        assert_eq!(sorts, vec![Some(0), Some(1), Some(2), None]);
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            (app.compare_selected(), app.target().label.as_str()),
+            (false, "db-02")
+        );
+        // < > go through the compare tab first: [⧉, local, db-02, db-03].
+        press(&mut app, KeyCode::Char('<'));
+        press(&mut app, KeyCode::Char('<'));
+        assert!(app.compare_selected());
+        press(&mut app, KeyCode::Char('<'));
+        assert_eq!(
+            (app.compare_selected(), app.target().label.as_str()),
+            (false, "db-03")
+        );
 
         // x stops this host only, X all of them.
         let cmds = press(&mut app, KeyCode::Char('x'));
@@ -1118,6 +1145,10 @@ mod tests {
             ],
             "db-03 is stopping already"
         );
+        // On the compare tab, x stops them all (none left to stop now).
+        press(&mut app, KeyCode::Char('>'));
+        assert!(app.compare_selected());
+        assert!(press(&mut app, KeyCode::Char('x')).is_empty());
     }
 
     #[test]

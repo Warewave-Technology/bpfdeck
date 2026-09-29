@@ -1,5 +1,6 @@
 //! Application state and reducer: `App::update(Msg) -> Vec<Cmd>`. No I/O here, ever.
 
+mod compare;
 mod connect;
 mod edit;
 mod filter;
@@ -21,6 +22,7 @@ use crate::model::run_state::Run;
 use crate::msg::{Cmd, Msg};
 use crate::source::{Origin, ResolvedSource, SourceSpec};
 use crate::sys::SystemInfo;
+pub use compare::CompareView;
 pub use connect::{
     ConnectForm, Field as ConnectField, Phase as ConnectPhase, RowState as ConnectRowState, SudoMode,
 };
@@ -181,6 +183,9 @@ pub struct App {
     pub editor: Option<Editor>,
     /// The latest run started on several targets at once (F3).
     pub fleet: Option<FleetRun>,
+    /// The fleet run's compare tab is the selected results tab (F4).
+    pub compare: bool,
+    pub compare_view: CompareView,
     pub tab: usize,
     /// Detail scroll offset. The renderer clamps it to the content, hence the `Cell`.
     pub scroll: Cell<u16>,
@@ -217,6 +222,8 @@ impl App {
             help_scroll: Cell::new(0),
             editor: None,
             fleet: None,
+            compare: false,
+            compare_view: CompareView::default(),
             tab: 0,
             scroll: Cell::new(0),
             notice: None,
@@ -279,9 +286,20 @@ impl App {
         entry.validation(self.target().id)
     }
 
+    /// `<` `>`: through the tabs, the compare tab first while a fleet run exists.
     fn switch_target(&mut self, delta: isize) {
-        let n = self.targets.len() as isize;
-        self.active = (self.active as isize + delta).rem_euclid(n) as usize;
+        let extra = usize::from(self.fleet.is_some());
+        let n = (self.targets.len() + extra) as isize;
+        let at = if self.compare_selected() {
+            0
+        } else {
+            self.active + extra
+        };
+        let next = (at as isize + delta).rem_euclid(n) as usize;
+        self.compare = extra == 1 && next == 0;
+        if !self.compare {
+            self.active = next - extra;
+        }
         self.scroll.set(0);
     }
 
@@ -342,6 +360,7 @@ impl App {
             (None, _) if self.editor.is_some() => Context::Editor,
             (None, Screen::Browser) if self.filter_editing => Context::Filter,
             (None, Screen::Browser) => Context::Browser,
+            (None, Screen::Run) if self.compare_selected() => Context::Compare,
             (None, Screen::Run) if self.target().log_view.editing => Context::LogFilter,
             (None, Screen::Run) => Context::Run,
         }
@@ -630,6 +649,7 @@ impl App {
             Context::Connect => self.connect_action(action),
             Context::Editor => self.editor_action(action),
             Context::Run | Context::LogFilter => self.run_action(action),
+            Context::Compare => self.compare_action(action),
         }
     }
 
@@ -683,7 +703,7 @@ impl App {
             Action::EditInline => self.start_editing(),
             Action::ToggleOriginal => return self.toggle_original(),
             Action::ShowRun => {
-                if self.active_run().is_some() {
+                if self.active_run().is_some() || self.compare_selected() {
                     self.screen = Screen::Run;
                 } else {
                     self.notify(Level::Info, "no run yet: select a script and press Enter".into());

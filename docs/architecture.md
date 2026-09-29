@@ -15,6 +15,7 @@ src/
     target.rs        targets (local + SSH hosts): connection, bpftrace, run, log view
     connect.rs       connect dialog form, connect/lost/disconnect handling
     edit.rs          inline editing: drafts, `i`/`u`, draft saved → revalidate
+    compare.rs       fleet run compare tab: view state, keys, members
     run.rs           run flow: params form, confirmation, run view actions
     tree.rs          tree/flat list rows
     filter.rs        fuzzy filter (nucleo-matcher)
@@ -41,6 +42,8 @@ src/
     log.rs           event log ring buffer (line joining, filter, eviction)
     form.rs          parameters form state → positional + named args
     editor.rs        inline editor text buffer: cursor, auto-indent, undo
+    diff.rs          line diff of a draft vs the original
+    compare.rs       fleet comparison: percentiles, merged hists, key × host, outliers
     describe.rs      one-line text for any OutputMsg (log summaries, --run)
     hist.rs          bpftrace-style bucket labels, trimming, eighth-block bars
     panels.rs        one panel per map name: data, deltas, keyed selection, focus
@@ -51,6 +54,7 @@ src/
     help.rs          `?` modal, generated from keymap.rs
     source_view.rs   line numbers + highlighter (reuses discovery::lexer regions)
     editor_view.rs   inline editor: highlighted buffer, cursor, scrolling
+    compare_view.rs  fleet run compare tab
     run_view.rs      header + log (panel layout in M5)
     modals.rs        params form, run confirmation, yes/no question
     widgets/         hist.rs, table.rs, value.rs, stats.rs, tseries.rs (one per panel kind)

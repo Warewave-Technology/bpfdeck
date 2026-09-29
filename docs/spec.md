@@ -121,6 +121,19 @@ problem with one blocks the start); the runs are grouped as a fleet run and each
 `⧉ fleet run on N targets` in its header. `x` stops the selected tab's run, `X` all runs
 of its fleet run.
 
+Compare tab (F4): a fleet run adds `⧉ <script>` in front of the results tabs and opens on
+it (`<` `>` reach it too). It lists the hosts (state, elapsed, errors, dropped; `j`/`k`
+select, `Enter` opens that host's tab), then each map across hosts, from each host's
+latest snapshot (`model/compare.rs`):
+- hist: one row per host with count, p50/p90/p99 and max as bucket ranges (keyed hists
+  sum their keys); `m` shows one histogram merged over the hosts instead;
+- map (table): key × host with a total column, top 10, sorted by the total or (`s`
+  cycles) by one host's column; `-` where a host lacks the key;
+- value: one row per host; stats and time series: per host tab only.
+A value (p50 or p99 for hists) above 3× the median of the other hosts is yellow with
+`◀`; a host whose snapshot is older than its usual print interval + 2 s is dimmed. `x`
+stops the whole fleet run.
+
 ### 5.3 Parameters form (modal, only if the script uses parameters)
 - Positional: every `$1..$N` used in the script → one text field each. `$#` usage noted.
 - Named: every `getopt("name")` / `getopt("name", default)` → field prefilled with the default;
@@ -391,6 +404,7 @@ the login (root), `sudo -n`, or `sudo -S` with the password from the connect dia
 | `r` | list | rescan + revalidate |
 | `x`, `Ctrl-C` | run view | stop run (SIGINT to bpftrace) |
 | `X` | run view | stop a fleet run on all its targets |
+| `x`, `m`, `s`, `j/k`, `Enter` | compare tab | stop all, merged hist, sort, pick host, open host tab |
 | `↑/↓`, `Space`, `a` | run confirmation | target checklist: move, toggle, all that validated |
 | `j/k`, `PgUp/PgDn`, `g/G` | run view | scroll the log (up pauses, `G` follows) |
 | `o` | list | show the last run |

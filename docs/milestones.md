@@ -85,7 +85,7 @@ consumer (delivered + dropped = sent, snapshots coalesced, exit last).
 - [x] F1 Host list in the connect dialog (parse + expand), parallel checks, per-host rows
 - [x] F2 Validation matrix in the Validation tab, disagreement count in the list
 - [x] F3 Target checklist in the confirmation, `FleetRun`, start/stop/quit on the group
-- [ ] F4 `model/compare.rs` + compare tab: hist percentiles/merge, key × host tables, outliers
+- [x] F4 `model/compare.rs` + compare tab: hist percentiles/merge, key × host tables, outliers
 - [ ] F5 Fleet export, spec/README/D-entries, end-to-end with 3 sshd containers
 
 ## M7 — Remote targets over SSH (docs/design-remote.md) ✅
