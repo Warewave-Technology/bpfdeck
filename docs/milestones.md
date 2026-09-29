@@ -81,12 +81,12 @@ flood (`// fake: flood=`) keeps key latency at 10–20 ms with nothing dropped; 
 test `tui::tests::flood_is_coalesced_and_accounted_for` checks accounting under a slow
 consumer (delivered + dropped = sent, snapshots coalesced, exit last).
 
-## M8 — Fleet mode (docs/design-fleet.md, D-024)
+## M8 — Fleet mode (docs/design-fleet.md, D-024) ✅
 - [x] F1 Host list in the connect dialog (parse + expand), parallel checks, per-host rows
 - [x] F2 Validation matrix in the Validation tab, disagreement count in the list
 - [x] F3 Target checklist in the confirmation, `FleetRun`, start/stop/quit on the group
 - [x] F4 `model/compare.rs` + compare tab: hist percentiles/merge, key × host tables, outliers
-- [ ] F5 Fleet export, spec/README/D-entries, end-to-end with 3 sshd containers
+- [x] F5 Fleet export, spec/README/D-entries, end-to-end with 3 sshd containers
 
 ## M7 — Remote targets over SSH (docs/design-remote.md) ✅
 - [x] R1 Targets in the app model; bottom results pane with one tab per target (D-021)

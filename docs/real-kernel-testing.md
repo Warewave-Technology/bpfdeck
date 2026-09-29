@@ -21,7 +21,8 @@ bpftrace version, one unusual kernel, pid namespaces. Known quirks of this envir
 ## SSH targets (remote execution)
 
 `tests/realhost/sshd.sh` starts the same image with sshd on `127.0.0.1:22022` (`PORT=`
-to change) and three users: `root` (key), `ops` (sudo without password), `pw` (sudo
+to change; `COUNT=3` starts `target1..3` on consecutive ports for fleet runs) and three
+users: `root` (key), `ops` (sudo without password), `pw` (sudo
 password `secret-pw`). It creates a throwaway key and an ssh wrapper in
 `$TMPDIR/bpfdeck-sshd`; pass the wrapper with `--ssh` and connect to `ops@target`,
 `pw@target` or `root@target` with `c`. Stop it with `docker rm -f bpfdeck-sshd`.
@@ -33,6 +34,13 @@ killed master (`ssh -O exit`) during a run: exit 255 with an explanation in the 
 reconnects the same tab; `d` and quitting leave no ssh processes or sockets; the sudo
 password never appears in a process list on either side; the bpftrace repo's tools
 validated on two targets at once (34 of 45 need a newer bpftrace than 0.23.2).
+
+Fleet mode checked on 2026-09-29 with `COUNT=3`: `ops@target{1..3}` connects all three
+in parallel (tabs in that order), syscount runs on the three at once, the compare tab
+fills, `w` writes 7 files (per host `.txt` + `.ndjson`, one fleet report), `x` stops all
+three with `exited(0)`, nothing is left on the hosts or in `/tmp/bpfdeck-<uid>`. The
+targets share one kernel, so their numbers are nearly identical; differences (and `◀`)
+are covered by the unit and snapshot tests.
 
 ## Findings (2026-09-28)
 

@@ -132,7 +132,9 @@ latest snapshot (`model/compare.rs`):
 - value: one row per host; stats and time series: per host tab only.
 A value (p50 or p99 for hists) above 3× the median of the other hosts is yellow with
 `◀`; a host whose snapshot is older than its usual print interval + 2 s is dimmed. `x`
-stops the whole fleet run.
+stops the whole fleet run. `w` (F5) writes every host's run as in §6.6 (host in the
+names) plus a comparison report `bpfdeck-fleet-<script>-<UTC>.txt` with the tables above,
+untruncated, and each hist merged over the hosts as a bpftrace-style `@` histogram.
 
 ### 5.3 Parameters form (modal, only if the script uses parameters)
 - Positional: every `$1..$N` used in the script → one text field each. `$#` usage noted.

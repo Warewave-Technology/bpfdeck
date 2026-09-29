@@ -1,6 +1,6 @@
 # Fleet mode: one script on several targets — design proposal
 
-**Status: approved as proposed (D-024, 2026-09-29). F1–F4 done.** In F4 the `◀` rule for
+**Status: approved as proposed (D-024, 2026-09-29) and implemented (F1–F5, D-028).** In F4 the `◀` rule for
 histograms looks at p50 as well as p99 (a host that is slow for most requests stands out
 even when every host has the same tail); the column that crosses the line is yellow. F3 adds `X` in a host
 tab to stop the whole fleet run (the compare tab of F4 will also stop it with `x`). In F2 the list

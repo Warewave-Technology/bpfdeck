@@ -164,3 +164,15 @@ on its first line, `(×N, last mm:ss)`; the order of individual errors is in the
 export. Raw lines keep the in-a-row rule (unknown output is data). In the script list,
 a failed validation shows only `✗`: the reason pushed the description off the row and is
 in the Info and Validation tabs. — accepted
+
+**D-028 — Fleet mode as built.** Implements D-024 (F1–F5). The fleet is app-level
+grouping: every member is an ordinary run on its target (`Cmd::StartRun` each), so the
+executor, runner and per-host tabs are unchanged; `FleetRun` only lists the members, and
+the latest one is the one compared. The compare tab is computed on each frame from the
+members' latest snapshots by a pure `model/compare.rs` (no second copy of the data; the
+cost is no time alignment between hosts). Percentiles are bucket ranges, never
+interpolated numbers. `◀` looks at p50 and p99 for hists (the design said p99 only; a
+host slow for most requests must stand out too). A failed row shows its failing check
+inline instead of `o` (letters are typed into the host field). Tabs follow the order the
+hosts were typed in. `X` in a host tab stops the whole fleet run (added). Export writes
+each host's usual files plus one comparison report with untruncated tables. — accepted

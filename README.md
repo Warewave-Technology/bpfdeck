@@ -49,6 +49,15 @@ Nothing is installed on the host: it needs `bpftrace`, a POSIX `sh` and coreutil
 has to ask for a passphrase or password, bpfdeck hands it the terminal. Details:
 `docs/design-remote.md`. To try it against a container: `tests/realhost/sshd.sh`.
 
+### Fleet runs
+Connect several hosts at once (`db-0{1..4}` in the host field). When more than one target
+can run scripts, the run confirmation lists them with checkboxes (`Space`, `a` = all where
+the script validated): the script starts on every checked host, each in its tab, and a
+`⧉ compare` tab shows the hosts side by side: histogram percentiles per host (or merged,
+`m`), maps as key × host tables, and `◀` on a host far off the others. `x` there stops
+all of them, `w` writes each host's run plus a comparison report. The Validation tab
+shows the script's result on each target. Details: `docs/design-fleet.md`.
+
 ## Keys worth knowing
 `Enter` run (params form → confirmation) · `x` stop (SIGINT, keeps the exit-time dump) ·
 `c` connect a host · `<` `>` target tabs · `d` disconnect · `i` edit a script inline
