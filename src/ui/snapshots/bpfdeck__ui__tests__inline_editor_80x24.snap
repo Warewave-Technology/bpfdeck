@@ -1,0 +1,29 @@
+---
+source: src/ui/mod.rs
+assertion_line: 322
+expression: backend
+---
+"╭ 1 Info │ 2 Source │ 3 Validation ──────────────── ✎ editing syscount_demo.bt ╮"
+"│ 1 #!/usr/bin/env bpftrace                                                    │"
+"│ 2 // syscount_demo.bt    Count syscalls by process name, printed every second│"
+"│ 3 //            Fixture for bpfdeck discovery + map rendering. (edited)      │"
+"│ 4 //                                                                         │"
+"│ 5 // USAGE: syscount_demo.bt                                                 │"
+"│ 6                                                                            │"
+"│ 7 tracepoint:raw_syscalls:sys_enter                                          │"
+"│ 8 {                                                                          │"
+"│ 9   @syscalls[comm] = count();                                               │"
+"│10 }                                                                          │"
+"│11                                                                            │"
+"│12 interval:s:1                                                               │"
+"│13 {                                                                          │"
+"│14   print(@syscalls, 10);                                                    │"
+"│15   clear(@syscalls);                                                        │"
+"│16 }                                                                          │"
+"│                                                                              │"
+"│                                                                              │"
+"╰──────────────────────────────────────────────────────────────────────────────╯"
+"╭ [local] │ + ────────────────────────────────────────── root · 6.1.0-18-amd64 ╮"
+"│No run on local yet: select a script and press Enter. c connects to a host.   │"
+"╰──────────────────────────────────────────────────────────────────────────────╯"
+" Esc done C-z undo                     bpftrace v0.21.2 · 6.1.0-18-amd64 · root "

@@ -6,8 +6,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, List, ListItem, ListState, Paragraph, Wrap};
 
-use super::source_view;
 use super::theme::Theme;
+use super::{editor_view, source_view};
 use crate::app::tree::ListRow;
 use crate::app::{App, BpftraceState, Entry, LoadState, Screen, TABS, ValidationState};
 use crate::bpftrace::validate::{Strategy, Validation, Verdict};
@@ -165,7 +165,13 @@ fn list_row(
         Span::styled(dir, Theme::muted()),
         Span::raw(name),
     ];
-    if let Some(desc) = &entry.script.meta.description {
+    if let Some(d) = &entry.draft {
+        spans.push(Span::styled(
+            " ✎",
+            if d.active { Theme::accent() } else { Theme::muted() },
+        ));
+    }
+    if let Some(desc) = &entry.shown().meta.description {
         spans.push(Span::styled(format!("  {desc}"), Theme::muted()));
     }
     if let Some(suffix) = row_suffix(state) {
@@ -203,7 +209,11 @@ pub fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
     let tabs_width = tabs.width();
     let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Theme::border())
+        .border_style(if app.editor.is_some() {
+            Theme::border_focused()
+        } else {
+            Theme::border()
+        })
         .title(tabs);
     // The selected ID on the right, when it fits next to the tabs (it is in the list anyway).
     let title_id = match app.selected_row() {
@@ -211,7 +221,11 @@ pub fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
         _ => app.selected().map(|e| e.id().to_string()),
     };
     if let Some(title_id) = title_id {
-        let id = Line::styled(format!(" {title_id} "), Theme::muted()).right_aligned();
+        let id = if app.editor.is_some() {
+            Line::styled(format!(" ✎ editing {title_id} "), Theme::accent()).right_aligned()
+        } else {
+            Line::styled(format!(" {title_id} "), Theme::muted()).right_aligned()
+        };
         if tabs_width + id.width() + 4 <= usize::from(area.width) {
             block = block.title(id);
         }
@@ -237,7 +251,13 @@ pub fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
     };
     let (lines, wrap) = match app.tab {
         0 => (info_lines(entry, app), true),
-        1 => (source_view::lines(&entry.script.content), false),
+        1 if app.editor.as_ref().is_some_and(|e| e.id == entry.id()) => {
+            if let Some(ed) = &app.editor {
+                editor_view::draw(frame, inner, ed);
+            }
+            return;
+        }
+        1 => (source_view::lines(&entry.shown().content), false),
         _ => (validation_lines(app, entry), true),
     };
 
@@ -316,7 +336,7 @@ fn strategy_name(s: Strategy) -> &'static str {
 }
 
 fn info_lines(entry: &Entry, app: &App) -> Vec<Line<'static>> {
-    let meta = &entry.script.meta;
+    let meta = &entry.shown().meta;
     let mut lines = vec![
         match &meta.description {
             Some(d) => Line::raw(d.clone()),
@@ -332,6 +352,23 @@ fn info_lines(entry: &Entry, app: &App) -> Vec<Line<'static>> {
             ],
         ),
     ];
+    match &entry.draft {
+        Some(d) if d.active => lines.push(field(
+            "Edited",
+            vec![Span::styled(
+                "✎ runs use your version, the file is unchanged (u: original)",
+                Theme::accent(),
+            )],
+        )),
+        Some(_) => lines.push(field(
+            "Edited",
+            vec![Span::styled(
+                "showing the original (u: your edits)",
+                Theme::muted(),
+            )],
+        )),
+        None => {}
+    }
 
     if !meta.usage.is_empty() {
         lines.extend(fields(

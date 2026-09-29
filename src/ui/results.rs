@@ -117,7 +117,10 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
     let mut lines = Vec::new();
     match (&t.conn, &t.bpftrace) {
         (Conn::Lost(reason), _) => lines.push(Line::styled(
-            format!("Connection to {} lost: {reason}. Press c to reconnect.", t.label),
+            format!(
+                "Connection to {} lost: {reason}. c reconnects, d closes the tab.",
+                t.label
+            ),
             Theme::error(),
         )),
         (_, BpftraceState::Missing(_)) => lines.push(Line::from(vec![
@@ -126,6 +129,16 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled(" connects to a host where scripts can run.", Theme::muted()),
         ])),
         (_, BpftraceState::Detecting) => lines.push(Line::styled("detecting bpftrace…", Theme::muted())),
+        _ if t.is_remote() => lines.push(Line::from(vec![
+            Span::styled(
+                format!("No run on {} yet: select a script and press ", t.label),
+                Theme::muted(),
+            ),
+            Span::styled("Enter", Theme::key_hint()),
+            Span::styled(". ", Theme::muted()),
+            Span::styled("d", Theme::key_hint()),
+            Span::styled(" disconnects.", Theme::muted()),
+        ])),
         _ => lines.push(Line::from(vec![
             Span::styled(
                 format!("No run on {} yet: select a script and press ", t.label),

@@ -17,6 +17,8 @@ pub enum Context {
     Ask,
     /// Connect dialog (unbound printable keys go to the focused field).
     Connect,
+    /// Inline script editor (unbound keys edit the text).
+    Editor,
     /// Run view: header + event log.
     Run,
     /// Typing a log filter.
@@ -25,13 +27,14 @@ pub enum Context {
 }
 
 impl Context {
-    pub const ALL: [Context; 9] = [
+    pub const ALL: [Context; 10] = [
         Self::Browser,
         Self::Filter,
         Self::Form,
         Self::Confirm,
         Self::Ask,
         Self::Connect,
+        Self::Editor,
         Self::Run,
         Self::LogFilter,
         Self::Help,
@@ -45,6 +48,7 @@ impl Context {
             Self::Confirm => "Run confirmation",
             Self::Ask => "Question",
             Self::Connect => "Connect to a host",
+            Self::Editor => "Editing a script",
             Self::Run => "Run view",
             Self::LogFilter => "Log filter",
             Self::Help => "Help",
@@ -98,6 +102,11 @@ pub enum Action {
     Disconnect,
     PrevChoice,
     NextChoice,
+    /// Edit the selected script in the Source tab.
+    EditInline,
+    /// Switch between the original and the edited version.
+    ToggleOriginal,
+    Undo,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -153,7 +162,7 @@ const fn bind(
     }
 }
 
-use Context::{Ask, Browser, Confirm, Connect, Filter, Form, Help, LogFilter, Run};
+use Context::{Ask, Browser, Confirm, Connect, Editor, Filter, Form, Help, LogFilter, Run};
 use KeyCode::{BackTab, Down, End, Enter, Esc, Home, Left, PageDown, PageUp, Right, Tab, Up};
 
 #[rustfmt::skip]
@@ -180,6 +189,8 @@ pub const BINDINGS: &[Binding] = &[
     bind(Browser, &[key(PageUp), ctrl('u')], "PgUp/C-u", Action::ScrollUp, "scroll detail up", None),
     bind(Browser, &[ch('/')], "/", Action::OpenFilter, "filter by name/description", Some("filter")),
     bind(Browser, &[key(Esc)], "Esc", Action::ClearFilter, "clear filter", None),
+    bind(Browser, &[ch('i')], "i", Action::EditInline, "edit here (Source tab)", None),
+    bind(Browser, &[ch('u')], "u", Action::ToggleOriginal, "original / your edits", None),
     bind(Browser, &[ch('e')], "e", Action::Edit, "open in $EDITOR", None),
     bind(Browser, &[ch('r')], "r", Action::Rescan, "rescan + revalidate", None),
     bind(Browser, &[ch('?')], "?", Action::Help, "help", Some("help")),
@@ -205,6 +216,9 @@ pub const BINDINGS: &[Binding] = &[
     bind(Connect, &[key(Right)], "→", Action::NextChoice, "sudo: next choice", None),
     bind(Connect, &[key(Enter)], "Enter", Action::Submit, "connect / auth in terminal", Some("connect")),
     bind(Connect, &[key(Esc)], "Esc", Action::Close, "cancel", Some("cancel")),
+
+    bind(Editor, &[key(Esc)], "Esc", Action::Close, "done, keep the edits", Some("done")),
+    bind(Editor, &[ctrl('z')], "C-z", Action::Undo, "undo", Some("undo")),
 
     bind(Ask, &[ch('y')], "y", Action::Yes, "yes", Some("yes")),
     bind(Ask, &[ch('n'), key(Esc)], "n/Esc", Action::No, "no", Some("no")),

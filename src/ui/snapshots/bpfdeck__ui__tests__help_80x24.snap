@@ -1,21 +1,21 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 274
+assertion_line: 340
 expression: "render(&app, 80, 24)"
 ---
 "╭ Scripts (8) ─────────────╮╭ 1 Info │ 2 Source │ 3 Validation ────────────────╮"
 "╭ Keys ──────────────────────────────────────────────────────────── j/k scroll ╮"
-"│Browser                                Question                               │"
-"│  j/↓       next script                  y         yes                        │"
-"│  k/↑       previous script              n/Esc     no                         │"
-"│  g/Home    first script                                                      │"
-"│  G/End     last script                Connect to a host                      │"
-"│  Enter     run script / open dir        Tab/↓     next field                 │"
-"│  o         show last run output         S-Tab/↑   previous field             │"
-"│  t         tree / flat list             ←         sudo: previous choice      │"
-"│  <         previous target tab          →         sudo: next choice          │"
-"│  >         next target tab              Enter     connect / auth in terminal │"
-"│  c/+       connect to a host            Esc       cancel                     │"
+"│Browser                                Connect to a host                      │"
+"│  j/↓       next script                  Tab/↓     next field                 │"
+"│  k/↑       previous script              S-Tab/↑   previous field             │"
+"│  g/Home    first script                 ←         sudo: previous choice      │"
+"│  G/End     last script                  →         sudo: next choice          │"
+"│  Enter     run script / open dir        Enter     connect / auth in terminal │"
+"│  o         show last run output         Esc       cancel                     │"
+"│  t         tree / flat list                                                  │"
+"│  <         previous target tab        Editing a script                       │"
+"│  >         next target tab              Esc       done, keep the edits       │"
+"│  c/+       connect to a host            C-z       undo                       │"
 "│  d         disconnect this host                                              │"
 "│  h/←       collapse dir / to parent   Run view                               │"
 "│  l/→       expand dir                   x/C-c     stop (SIGINT to bpftrace)  │"

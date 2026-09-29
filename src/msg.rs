@@ -81,6 +81,12 @@ pub enum Msg {
         attempt: u64,
         reason: Option<String>,
     },
+    /// Result of `Cmd::SaveDraft`: the private copy bpftrace reads.
+    DraftSaved {
+        id: String,
+        hash: String,
+        result: Result<PathBuf, String>,
+    },
     /// The target's SSH master is gone (checked every few seconds while connected).
     ConnectionLost {
         target: TargetId,
@@ -139,6 +145,13 @@ pub enum Cmd {
         sudo: SudoChoice,
         bpftrace: Option<String>,
         interactive: bool,
+    },
+    /// Write an edited script to a private file for bpftrace (D-025); `hash` identifies
+    /// the content in the answer.
+    SaveDraft {
+        id: String,
+        hash: String,
+        content: String,
     },
     /// Abandon a connect attempt (and close its master if it got that far).
     CancelConnect { attempt: u64 },

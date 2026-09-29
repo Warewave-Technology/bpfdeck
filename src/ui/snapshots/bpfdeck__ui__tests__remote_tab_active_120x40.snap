@@ -1,6 +1,6 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 290
+assertion_line: 311
 expression: "render(&app, 120, 40)"
 ---
 "╭ Scripts (8) ───────────────────────────╮╭ 1 Info │ 2 Source │ 3 Validation ─────────────────── missing_probe_demo.bt ╮"
@@ -40,6 +40,6 @@ expression: "render(&app, 120, 40)"
 "│                                        ││                                                                            │"
 "╰────────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯"
 "╭ local │ [ops@10.0.3.14] │ + ───────────── root via sudo · 5.14.0-427.13.1.el9_4.x86_64 · Rocky Linux 9.4 (Blue Onyx) ╮"
-"│No run on ops@10.0.3.14 yet: select a script and press Enter. c connects to a host.                                   │"
+"│No run on ops@10.0.3.14 yet: select a script and press Enter. d disconnects.                                          │"
 "╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯"
 " connected to ops@10.0.3.14 (root via sudo); validating 8 scripts there         ops@10.0.3.14 · bpftrace v0.21.2 · root "

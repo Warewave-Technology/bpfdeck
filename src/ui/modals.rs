@@ -123,7 +123,7 @@ pub fn draw_confirm(frame: &mut Frame, area: Rect, app: &App, confirm: &Confirm)
         ));
     }
     lines.extend([
-        field("Path", vec![Span::raw(confirm.path.display().to_string())]),
+        field("Path", path_spans(app, confirm)),
         field("Command", vec![Span::styled(command_line, Theme::code_var())]),
         field(
             "Probes",
@@ -181,6 +181,18 @@ pub fn draw_confirm(frame: &mut Frame, area: Rect, app: &App, confirm: &Confirm)
         format!(" Run {} ", confirm.script_id)
     };
     popup(frame, area, title, lines, 100);
+}
+
+/// The script's path; for an edited script the original path, marked as edited.
+fn path_spans(app: &App, confirm: &Confirm) -> Vec<Span<'static>> {
+    let original = app.entries.iter().find(|e| e.id() == confirm.script_id);
+    match original {
+        Some(e) if confirm.edited => vec![
+            Span::raw(e.script.file.path.display().to_string()),
+            Span::styled("  ✎ your edited version", Theme::accent()),
+        ],
+        _ => vec![Span::raw(confirm.path.display().to_string())],
+    }
 }
 
 /// Why the run may fail here (spec §7): privileges, lockdown, validation result.

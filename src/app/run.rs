@@ -24,7 +24,10 @@ use crate::remote::REMOTE_SCRIPT;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Confirm {
     pub script_id: String,
+    /// The file bpftrace gets: the script, or the private copy of its edited version.
     pub path: PathBuf,
+    /// Runs the inline-edited version (D-025).
+    pub edited: bool,
     pub probes: Vec<String>,
     pub positional: Vec<String>,
     pub named: Vec<NamedArg>,
@@ -158,7 +161,14 @@ impl App {
         let Some(entry) = self.selected() else {
             return Vec::new();
         };
-        match ParamForm::new(&entry.script.meta) {
+        if entry.run_path().is_none() {
+            self.notify(
+                Level::Info,
+                "saving your edits; press Enter again in a moment".into(),
+            );
+            return Vec::new();
+        }
+        match ParamForm::new(&entry.shown().meta) {
             Some(form) => self.overlay = Some(Overlay::Params { script_id: id, form }),
             None => self.open_confirm(&id, Vec::new(), Vec::new()),
         }
@@ -170,12 +180,15 @@ impl App {
         let Some(entry) = self.entries.iter().find(|e| e.id() == script_id) else {
             return;
         };
-        let meta = &entry.script.meta;
+        let (meta, Some(path)) = (&entry.shown().meta, entry.run_path()) else {
+            return;
+        };
         let validation_says_unsafe =
             matches!(entry.validation(target), ValidationState::Done(v) if v.verdict == Verdict::NeedsUnsafe);
         self.overlay = Some(Overlay::Confirm(Confirm {
             script_id: script_id.to_string(),
-            path: entry.script.file.path.clone(),
+            path: path.to_path_buf(),
+            edited: entry.edited(),
             probes: meta.probes.iter().map(|p| p.spec.clone()).collect(),
             positional,
             named,

@@ -182,7 +182,7 @@ pub fn classify(src: &str) -> Vec<Vec<(Kind, &str)>> {
     lines
 }
 
-fn style(kind: Kind) -> Style {
+pub(super) fn style(kind: Kind) -> Style {
     match kind {
         Kind::Plain => Style::new(),
         Kind::Comment => Theme::code_comment(),

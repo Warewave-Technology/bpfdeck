@@ -63,6 +63,8 @@ pub async fn run(input: String, bpftrace_path: PathBuf, export_dir: PathBuf, ssh
         ssh,
         remotes: Arc::new(Mutex::new(HashMap::new())),
         connecting: HashMap::new(),
+        drafts: drafts_dir(),
+        draft_seq: 0,
     };
     let result = event_loop(&mut terminal, &mut app, &mut exec, &mut input_rx, &mut rx).await;
     // Dropping a run handle kills a still running bpftrace (its whole process group; for a
@@ -171,6 +173,10 @@ struct Executor {
     remotes: Arc<Mutex<HashMap<TargetId, Arc<SshTarget>>>>,
     /// Connect attempts in flight: the task and the target whose master it may open.
     connecting: HashMap<u64, (tokio::task::JoinHandle<()>, SshTarget)>,
+    /// Private directory for copies of edited scripts (D-025); removed on exit.
+    drafts: PathBuf,
+    /// Each save gets a new file, so a slow earlier write never replaces a later one.
+    draft_seq: u64,
 }
 
 struct ActiveRun {
@@ -306,6 +312,18 @@ impl Executor {
                 bpftrace,
                 interactive,
             } => self.connect(attempt, target, dest, sudo, bpftrace, interactive, terminal),
+            Cmd::SaveDraft { id, hash, content } => {
+                self.draft_seq += 1;
+                let name = id.rsplit('/').next().unwrap_or(&id).to_string();
+                let path = self.drafts.join(format!("{}-{name}", self.draft_seq));
+                let (tx, dir) = (self.tx.clone(), self.drafts.clone());
+                tokio::task::spawn_blocking(move || {
+                    let result = write_private(&dir, &path, &content)
+                        .map(|()| path)
+                        .map_err(|e| format!("{e:#}"));
+                    let _ = tx.blocking_send(Msg::DraftSaved { id, hash, result });
+                });
+            }
             Cmd::CancelConnect { attempt } => {
                 if let Some((task, base)) = self.connecting.remove(&attempt) {
                     task.abort();
@@ -547,9 +565,10 @@ impl Executor {
         Ok(())
     }
 
-    /// Stop runs and close every SSH master (quitting).
+    /// Stop runs, close every SSH master and remove the copies of edited scripts (quitting).
     async fn shutdown(&mut self) {
         self.runs.clear();
+        let _ = std::fs::remove_dir_all(&self.drafts);
         for (task, _) in self.connecting.values() {
             task.abort();
         }
@@ -690,6 +709,33 @@ async fn watch_master(
     }
 }
 
+/// `<cache>/bpfdeck/drafts/<pid>` (temp dir as a fallback); created on the first save.
+fn drafts_dir() -> PathBuf {
+    let root = source::default_cache_root()
+        .map(|c| c.join("drafts"))
+        .unwrap_or_else(|_| std::env::temp_dir().join("bpfdeck-drafts"));
+    root.join(std::process::id().to_string())
+}
+
+/// Write `content` to `path` in `dir`, both private to the user (0700 / 0600).
+fn write_private(dir: &Path, path: &Path, content: &str) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+        .with_context(|| format!("creating {}", dir.display()))?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .with_context(|| format!("creating {}", path.display()))?;
+    file.write_all(content.as_bytes())
+        .with_context(|| format!("writing {}", path.display()))
+}
+
 /// `$TMPDIR/bpfdeck-<pid>-<name>`, keeping the file name so editors pick the right mode.
 fn temp_copy(path: &Path) -> Result<PathBuf> {
     let name = path
@@ -713,6 +759,22 @@ mod tests {
     use crate::bpftrace::json::{MapValue, OutputMsg};
     use crate::bpftrace::testutil::{fake, script};
     use crate::remote::session::testutil;
+
+    #[test]
+    fn drafts_are_private_files() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let drafts = dir.path().join("drafts/42");
+        let path = drafts.join("1-x.bt");
+        write_private(&drafts, &path, "BEGIN {}\n").expect("write");
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "BEGIN {}\n");
+        let mode = |p: &Path| std::fs::metadata(p).expect("meta").permissions().mode() & 0o777;
+        assert_eq!((mode(&drafts), mode(&path)), (0o700, 0o600));
+        assert!(
+            write_private(&drafts, &path, "again").is_err(),
+            "never overwrites"
+        );
+    }
 
     #[tokio::test]
     async fn a_dead_master_is_reported_once_and_forgotten() {

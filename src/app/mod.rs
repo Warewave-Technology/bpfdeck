@@ -1,6 +1,7 @@
 //! Application state and reducer: `App::update(Msg) -> Vec<Cmd>`. No I/O here, ever.
 
 mod connect;
+mod edit;
 mod filter;
 mod run;
 pub mod target;
@@ -21,6 +22,7 @@ use crate::msg::{Cmd, Msg};
 use crate::source::{Origin, ResolvedSource, SourceSpec};
 use crate::sys::SystemInfo;
 pub use connect::{ConnectForm, Field as ConnectField, Phase as ConnectPhase, SudoMode};
+pub use edit::{Draft, Editor};
 use filter::Fuzzy;
 pub use run::{Ask, Confirm, LogView};
 use target::{LOCAL, Target, TargetId};
@@ -64,15 +66,46 @@ static PENDING: ValidationState = ValidationState::Pending;
 
 #[derive(Debug, Clone)]
 pub struct Entry {
+    /// The script as scanned from the source (never changed by bpfdeck).
     pub script: Script,
+    /// For the shown version (the draft when it is active).
     pub request: ValidationRequest,
     /// Per target: each host validates the same script on its own kernel.
     pub validations: HashMap<TargetId, ValidationState>,
+    /// Inline edits (D-025).
+    pub draft: Option<Draft>,
 }
 
 impl Entry {
     pub fn id(&self) -> &str {
         &self.script.file.id
+    }
+
+    /// What is shown, validated and run: the active draft or the original.
+    pub fn shown(&self) -> &Script {
+        match &self.draft {
+            Some(d) if d.active => &d.script,
+            _ => &self.script,
+        }
+    }
+
+    pub fn edited(&self) -> bool {
+        self.draft.as_ref().is_some_and(|d| d.active)
+    }
+
+    /// The file bpftrace gets for the shown version; `None` while a draft's copy is
+    /// still being written.
+    pub fn run_path(&self) -> Option<&std::path::Path> {
+        match &self.draft {
+            Some(d) if d.active => d.path.as_deref(),
+            _ => Some(&self.script.file.path),
+        }
+    }
+
+    fn refresh_request(&mut self) {
+        let s = self.shown();
+        let path = self.run_path().unwrap_or(&self.script.file.path).to_path_buf();
+        self.request = ValidationRequest::new(&path, &s.content, &s.meta);
     }
 
     pub fn validation(&self, target: TargetId) -> &ValidationState {
@@ -142,6 +175,8 @@ pub struct App {
     pub screen: Screen,
     pub overlay: Option<Overlay>,
     pub help_scroll: Cell<u16>,
+    /// Inline editor on the Source tab (D-025).
+    pub editor: Option<Editor>,
     pub tab: usize,
     /// Detail scroll offset. The renderer clamps it to the content, hence the `Cell`.
     pub scroll: Cell<u16>,
@@ -176,6 +211,7 @@ impl App {
             screen: Screen::Browser,
             overlay: None,
             help_scroll: Cell::new(0),
+            editor: None,
             tab: 0,
             scroll: Cell::new(0),
             notice: None,
@@ -237,6 +273,27 @@ impl App {
         }
     }
 
+    fn selected_index(&self) -> Option<usize> {
+        match self.rows.get(self.cursor)? {
+            ListRow::Script { entry, .. } => Some(*entry),
+            ListRow::Dir { .. } => None,
+        }
+    }
+
+    /// Validation states to start from: `Skipped` where a target cannot validate.
+    fn fresh_validations(&self) -> HashMap<TargetId, ValidationState> {
+        self.targets
+            .iter()
+            .filter_map(|t| match (&t.conn, &t.bpftrace) {
+                (target::Conn::Lost(_), _) => {
+                    Some((t.id, ValidationState::Skipped("connection lost".into())))
+                }
+                (_, BpftraceState::Missing(reason)) => Some((t.id, ValidationState::Skipped(reason.clone()))),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn selected_row(&self) -> Option<&ListRow> {
         self.rows.get(self.cursor)
     }
@@ -262,6 +319,7 @@ impl App {
             (Some(Overlay::Confirm(_)), _) => Context::Confirm,
             (Some(Overlay::Ask(_)), _) => Context::Ask,
             (Some(Overlay::Connect(_)), _) => Context::Connect,
+            (None, _) if self.editor.is_some() => Context::Editor,
             (None, Screen::Browser) if self.filter_editing => Context::Filter,
             (None, Screen::Browser) => Context::Browser,
             (None, Screen::Run) if self.target().log_view.editing => Context::LogFilter,
@@ -355,6 +413,7 @@ impl App {
                 self.on_connect_failed(attempt, reason);
                 Vec::new()
             }
+            Msg::DraftSaved { id, hash, result } => self.on_draft_saved(&id, &hash, result),
             Msg::ConnectionLost { target, reason } => {
                 self.on_connection_lost(target, reason);
                 Vec::new()
@@ -395,22 +454,29 @@ impl App {
         };
         let keep = self.current_key();
         let first_load = self.source.is_none();
-        // Where bpftrace is known to be missing, say so instead of "pending".
-        let skipped: HashMap<TargetId, ValidationState> = self
-            .targets
-            .iter()
-            .filter_map(|t| match &t.bpftrace {
-                BpftraceState::Missing(reason) => Some((t.id, ValidationState::Skipped(reason.clone()))),
-                _ => None,
-            })
+        let skipped = self.fresh_validations();
+        // Drafts outlive a rescan (the edits win; the original is what was scanned now).
+        let mut drafts: HashMap<String, Draft> = self
+            .entries
+            .drain(..)
+            .filter_map(|e| Some((e.id().to_string(), e.draft?)))
             .collect();
         self.entries = catalog
             .scripts
             .into_iter()
-            .map(|script| Entry {
-                request: ValidationRequest::new(&script.file.path, &script.content, &script.meta),
-                script,
-                validations: skipped.clone(),
+            .map(|script| {
+                let draft = drafts.remove(&script.file.id).map(|mut d| {
+                    d.script = Script::new(script.file.clone(), d.script.content);
+                    d
+                });
+                let mut entry = Entry {
+                    request: ValidationRequest::new(&script.file.path, &script.content, &script.meta),
+                    script,
+                    validations: skipped.clone(),
+                    draft,
+                };
+                entry.refresh_request();
+                entry
             })
             .collect();
         self.source = Some(catalog.source);
@@ -475,7 +541,7 @@ impl App {
             cmds.extend(
                 self.entries
                     .iter()
-                    .filter(|e| e.validation(t.id) == &ValidationState::Pending)
+                    .filter(|e| e.validation(t.id) == &ValidationState::Pending && e.run_path().is_some())
                     .map(|e| Cmd::Validate {
                         target: t.id,
                         id: e.id().to_string(),
@@ -515,6 +581,7 @@ impl App {
                 Context::LogFilter => self.log_filter_key(key),
                 Context::Form => self.form_key(key),
                 Context::Connect => self.connect_key(key),
+                Context::Editor => self.editor_key(key),
                 _ => {}
             }
             return Vec::new();
@@ -537,6 +604,7 @@ impl App {
             Context::Confirm => self.confirm_action(action),
             Context::Ask => self.ask_action(action),
             Context::Connect => self.connect_action(action),
+            Context::Editor => self.editor_action(action),
             Context::Run | Context::LogFilter => self.run_action(action),
         }
     }
@@ -588,6 +656,8 @@ impl App {
             Action::NextTarget => self.switch_target(1),
             Action::Connect => self.open_connect(),
             Action::Disconnect => return self.request_disconnect(),
+            Action::EditInline => self.start_editing(),
+            Action::ToggleOriginal => return self.toggle_original(),
             Action::ShowRun => {
                 if self.active_run().is_some() {
                     self.screen = Screen::Run;

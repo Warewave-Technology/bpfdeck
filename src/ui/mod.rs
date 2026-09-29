@@ -1,6 +1,7 @@
 pub mod theme;
 
 mod browser;
+mod editor_view;
 mod help;
 mod modals;
 mod results;
@@ -14,6 +15,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
 use crate::app::{App, BpftraceState, Level, Overlay, Screen};
+use crate::keymap::Context;
 use crate::sys::{Lockdown, Privilege};
 use theme::Theme;
 
@@ -45,7 +47,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
 
     // Browser on top, results tabs at the bottom: small until there is something to show.
-    let results_open = app.active_run().is_some() || app.screen == Screen::Run;
+    // The inline editor gets the whole browser area (and the results pane stays small).
+    let editing = app.editor.is_some();
+    let results_open = !editing && (app.active_run().is_some() || app.screen == Screen::Run);
     if app.full_width && results_open {
         results::draw(frame, main, app);
     } else {
@@ -55,10 +59,14 @@ pub fn draw(frame: &mut Frame, app: &App) {
             Constraint::Length(3)
         };
         let [top, results_area] = Layout::vertical([Constraint::Min(5), bottom]).areas(main);
-        let [list, detail] =
-            Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).areas(top);
-        browser::draw_list(frame, list, app);
-        browser::draw_detail(frame, detail, app);
+        if editing {
+            browser::draw_detail(frame, top, app);
+        } else {
+            let [list, detail] =
+                Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).areas(top);
+            browser::draw_list(frame, list, app);
+            browser::draw_detail(frame, detail, app);
+        }
         results::draw(frame, results_area, app);
     }
     draw_status(frame, status, app);
@@ -115,7 +123,13 @@ fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
             // Whole hints only: skip one that doesn't fit, a shorter later one may.
             let mut room = usize::from(left_area.width);
             let mut spans = Vec::new();
-            for (keys, text) in crate::keymap::hints(app.context()) {
+            let context = app.context();
+            let mut hints: Vec<(&str, &str)> = crate::keymap::hints(context).collect();
+            // `d` matters only on a remote tab, so it is not a static hint.
+            if matches!(context, Context::Browser | Context::Run) && app.target().is_remote() {
+                hints.insert(1.min(hints.len()), ("d", "disconnect"));
+            }
+            for (keys, text) in hints {
                 let keys = format!(" {keys} ");
                 let width = keys.chars().count() + text.chars().count();
                 if width <= room {
@@ -294,6 +308,39 @@ mod tests {
         type_text(&mut app, "sysc");
         keys(&mut app, &[KeyCode::Enter, KeyCode::Enter]);
         insta::assert_snapshot!(render(&app, 80, 24));
+    }
+
+    #[test]
+    fn inline_editor_80x24() {
+        let mut app = ready();
+        keys(&mut app, &[KeyCode::Char('/')]);
+        type_text(&mut app, "sysc");
+        keys(&mut app, &[KeyCode::Enter, KeyCode::Char('i')]);
+        keys(&mut app, &[KeyCode::Down, KeyCode::Down, KeyCode::End]);
+        type_text(&mut app, " (edited)");
+        let backend = render(&app, 80, 24);
+        insta::assert_snapshot!(backend);
+        keys(&mut app, &[KeyCode::Esc]);
+        insta::assert_snapshot!("inline_edited_info_80x24", {
+            keys(&mut app, &[KeyCode::Char('1')]);
+            render(&app, 80, 24)
+        });
+    }
+
+    #[test]
+    fn disconnect_hint_on_remote_tabs() {
+        let mut app = ready();
+        let bar = |app: &App| {
+            let backend = render(app, 120, 40);
+            let buf = backend.buffer();
+            (0..120)
+                .map(|x| buf[(x, 39)].symbol().to_string())
+                .collect::<String>()
+        };
+        assert!(!bar(&app).contains("d disconnect"));
+        connect(&mut app, "ops@10.0.3.14");
+        app.notice = None;
+        assert!(bar(&app).contains(" d disconnect"), "{}", bar(&app));
     }
 
     #[test]
