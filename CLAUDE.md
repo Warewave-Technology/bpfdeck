@@ -98,4 +98,5 @@ M8 fleet mode (docs/design-fleet.md, D-024): F1 done (host lists, parallel conne
 F2 done (validation per target, disagreement count), F3 done (target checklist,
 `FleetRun`, `X`), F4 done (compare tab, `model/compare.rs`), F5 done (fleet export,
 `COUNT=3 tests/realhost/sshd.sh`). M8 complete (D-028).
-Open: RHEL/Debian 12 host checks. Remote `origin` is set; nothing pushed until release.
+Released: **v0.1.0** (2026-09-29, tag on `main`, GitHub Release with musl binaries, MIT OR
+Apache-2.0). Push only when the owner asks. Open: RHEL/Debian 12 host checks.
