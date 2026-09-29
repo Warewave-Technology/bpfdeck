@@ -97,3 +97,10 @@ same model on the remote side. — accepted
 for flat collections and for filter results (fuzzy ranking does not map onto a tree).
 Rows are derived from the filtered script list on each change (`app/tree.rs`, pure), so
 the filter, validation and run state need no tree awareness. — accepted
+
+**D-020 — Remote execution installs nothing on the target.** Owner's call (2026-09-29): an
+agent binary on hosts is not acceptable; any server reachable over SSH with admin rights
+must work as is, since the point is fixing problems on machines nobody prepared. The
+agent proposal (docs/design-remote.md history, c466bcc) is withdrawn; the agentless design
+(a fixed POSIX sh runner sent over `ssh host sh -s`) is in docs/design-remote.md, awaiting
+approval. — accepted

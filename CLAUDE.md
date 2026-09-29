@@ -90,5 +90,6 @@ M5 done: panels (`model/hist.rs`, `model/panels.rs`, `ui/widgets/`), coalescing 
 (`bpftrace/coalesce.rs`), prioritized input channel + frame budget in `tui.rs`.
 M6 (partial): export (`w`, spool), release workflow (D-015), real-kernel harness (D-016).
 Tree view done (D-019); name final (D-017); root is the model (D-018).
-Open: remote execution — design in docs/design-remote.md, **awaiting owner approval**;
+Open: remote execution — agentless design (D-020) in docs/design-remote.md, **awaiting
+owner approval**, do not implement before;
 RHEL/Debian 12 host checks. Remote `origin` is set; nothing pushed until release.

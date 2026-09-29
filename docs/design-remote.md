@@ -1,163 +1,246 @@
-# Remote execution over SSH — design proposal
+# Remote execution over SSH, agentless — design proposal
 
 **Status: proposal, awaiting the owner's approval. Nothing here is implemented.**
-Questions to answer are at the end. Until approved, spec §3 still lists remote execution
-as out of scope.
+Questions to answer are at the end. An earlier version proposed an agent binary on the
+host; the owner rejected it (D-020): *nothing may be installed on the target*. Any host
+you can reach over SSH with admin rights must work, because this is for fixing problems
+on servers you did not prepare.
 
 ## Goal
 
-From a laptop or jump host: browse a local directory or git repo of scripts, and validate
-and run them **on a remote Linux host**, with the same TUI: live panels, the exit-time
-dump, export. The remote host needs only `bpftrace` and an SSH login with root (D-018).
+`bpfdeck --host [user@]server01 <source>`: the same TUI, fed by scripts from your laptop
+(local directory or git repo), validated and run **on server01**, with live panels, the
+exit-time dump and exports. The host needs `bpftrace`, a POSIX `sh` and coreutils,
+nothing else, and nothing is left behind.
 
-Non-goals for the first cut: running on several hosts at once (fleet), resident daemons or
-network listeners, password handling.
+Non-goals for the first cut: several hosts at once (fleet), scripts that already live on
+the server.
 
-## Options
+## How it works
 
-| | How | Verdict |
-|---|---|---|
-| **A** | Copy the static binary, `ssh -t host sudo bpfdeck <source>`: the whole TUI runs remotely | Works **today** (release binaries are static). But scripts must be on the remote (or a git URL the remote can fetch), `$EDITOR` and exports are remote, one invocation per host. Worth documenting now; not the feature. |
-| **B** | Local bpfdeck (UI, discovery, git, editor, exports) talks to `bpfdeck agent` on the remote over SSH stdio; the agent runs bpftrace | **Recommended.** Uses the existing Msg/Cmd split; keeps every safety property; testable without network. |
-| **C** | Local bpfdeck spawns `ssh host sudo bpftrace …` directly | **Rejected**: measured below — stops lose the exit dump, a dropped connection leaves bpftrace running as root, and passing scripts/params through the remote shell breaks. |
+Every operation (detect, validate, run) is one `ssh … server01 sh -s` session, multiplexed
+over a single SSH connection. The remote command is always exactly `sh -s`; on stdin
+bpfdeck sends a small, fixed POSIX sh program (the *runner*, ~50 lines, embedded in
+bpfdeck, full text in the appendix) and then the data. The runner lives only in that
+shell's memory: nothing is copied to disk except the script, in a private temp dir that
+is removed when the session ends.
+
+```
+ laptop: bpfdeck                                server01
+ ┌──────────────────────────┐  ssh (one        ┌──────────────────────────────────┐
+ │ TUI, discovery, git,     │  ControlMaster   │ sh -s  ← runner (from stdin)      │
+ │ editor, exports, spool   │  connection,     │   mktemp -d, script.bt            │
+ │ runner/validator:        │  a session per   │   setsid bpftrace -f json … ──────┼─► stdout/stderr
+ │   the child is `ssh`     │  operation)      │   stop: line or EOF on stdin      │   back to bpfdeck
+ └──────────────────────────┘                  └──────────────────────────────────┘
+```
+
+Session protocol, in order. **Rule: never send data before the remote reader announced
+itself.** dash reads scripts from a pipe in blocks, so anything sent early is swallowed by
+the shell and lost.
+
+1. *(only if not root)* sudo line, then wait for `bpfdeck-remote: root` on stderr:
+   `exec sudo -n -- sh -c 'echo "bpfdeck-remote: root" >&2; exec sh -s'`.
+   With a sudo password, the line first prints `bpfdeck-remote: sudo`; the password is sent
+   only after that, and `sudo -S` reads it.
+2. The runner program, ending in the single line `bpfdeck_main; exit $?`. bash reads line by
+   line and runs a command as soon as the line is complete; with the call on the last
+   line, nothing of the program is left on stdin to be mistaken for data.
+3. Wait for `bpfdeck-remote: ready`, then send: `bpfdeck-remote 1`, the argv count, one argv
+   entry per line, the script length, the script bytes.
+4. Wait for `bpfdeck-remote: started`. From then on stdout is bpftrace's NDJSON and stderr
+   its messages, exactly as for a local run.
+5. Stop = write a line to stdin; the runner sends SIGINT to bpftrace's process group (END
+   and the map dump run), SIGTERM after 5 s, SIGKILL after 2 s more. EOF on stdin (lost
+   connection, bpfdeck exits) does the same. The session's exit status is bpftrace's.
+
+The argv is built locally by `command::run_argv` / `dry_run_argv` / `probe_list_argv`, as
+today, with the script path `script.bt` (the runner `cd`s into its temp dir). D-013 holds
+unchanged: the script and all parameters come after `--`. Values containing a newline are
+rejected (the only thing the line framing cannot carry).
 
 ## Evidence (spike, 2026-09-29)
 
-Throwaway container with OpenSSH + bpftrace 0.23.2 on the OrbStack kernel, reached over
-`ssh` on localhost. Program: `interval:s:1 { @ticks = count(); } END { printf("END-RAN\n"); }`,
-stopped after 3 s.
+OpenSSH + bpftrace 0.23.2 in a privileged container on the OrbStack kernel, reached over
+`ssh` on localhost, users: root, `ops` (NOPASSWD sudo), `pw` (sudo with password).
+Program: `interval:s:1 { @ticks = count(); } END { printf("END-RAN\n"); }`.
 
-| Scenario | END ran + final map dumped | bpftrace afterwards |
+**Plain SSH (why a runner is needed):**
+
+| Scenario | END + final dump | bpftrace afterwards |
 |---|---|---|
-| C-style `ssh -T host bpftrace …`, local ssh terminated | no | **still running, as root** (orphan) |
-| Same with a pty (`ssh -tt`) | no | killed (SIGHUP) |
-| Wrapper reading stdin; "stop" line → SIGINT | **yes**, exit 0 | gone |
-| Same wrapper, connection dropped (local ssh SIGKILL) | **yes** (EOF on stdin → SIGINT) | gone |
+| `ssh host bpftrace …`, local ssh terminated | lost | **still running as root** (orphan) |
+| `ssh -tt host bpftrace …` (pty), local ssh terminated | lost | killed by SIGHUP |
+| Program passed inline through `ssh … "sh -c '…'"` | — | quotes lost on the way: parse error |
 
-A first attempt that passed the program inline through `ssh … "sh -c '…'"` lost its quotes
-on the way (`printf("END-RAN\n")` arrived as `printf(END-RANn)` → parse error). That is the
-remote version of D-013: user data must never travel inside a remote command line.
+**The runner (all passed):**
 
-Takeaway: control must flow over the SSH channel's **stdin**, handled by a process on the
-remote that owns bpftrace. That is the agent.
-
-## Design (option B)
-
-```
- local bpfdeck                                   remote host (root)
- ┌──────────────────────────────┐   ssh stdio   ┌──────────────────────────────┐
- │ TUI, App (unchanged)         │   NDJSON      │ bpfdeck agent                │
- │ discovery, metadata, git     │ ◄───────────► │  validator (dry-run/-l)      │
- │ editor, exports              │               │  runner (pgroup, INT→TERM→KILL)
- │ Executor → RemoteBackend ────┼── ssh ────────┤  coalescer, spool            │
- └──────────────────────────────┘               │  → bpftrace                  │
-                                                └──────────────────────────────┘
-```
-
-**The seam already exists.** Every bpftrace side effect is a `Cmd` handled by the executor:
-`DetectEnv`, `Validate`, `StartRun`, `StopRun`, `ExportRun` (spool). A `Backend` trait with
-two implementations — `LocalBackend` (today's code, moved) and `RemoteBackend` (protocol
-client) — leaves `App`, the model and the widgets unchanged apart from showing the host.
-
-**The agent is the same static binary** (`bpfdeck agent`), reusing the tested pieces:
-`command::run_argv` (argv built on the remote, D-013 intact), `runner` (process group,
-SIGINT → SIGTERM → SIGKILL), `validate` (strategies, cache), `coalesce` (now also absorbs a
-slow network), the spool. It lives exactly as long as the SSH session: no daemon, no port.
-
-### Protocol
-
-NDJSON over the SSH channel, one message per line, request ids where replies are needed.
-All user data (script text, parameters) travels here, never on a command line.
-
-| local → agent | agent → local |
+| Scenario | Result |
 |---|---|
-| `hello {version}` | `hello {version, arch, kernel}` |
-| `detect {}` | `env {host: SystemInfo, bpftrace: BpftraceInfo \| error}` |
-| `validate {id, script, positional_count, probes}` | `validated {id, content_hash, validation}` |
-| `run {run_id, script, positional, named, allow_unsafe}` | `run_started {run_id}` / `run_failed {run_id, reason}` |
-| `stop {run_id}` | `run_batch {run_id, events, dropped}` (coalesced; exit last) |
-| `spool {run_id}` | `spool_chunk {run_id, data, last}` |
-| (stdin EOF = disconnect) | `error {message}` |
+| dash and bash as `sh`, root and `ops` via sudo: stop by line | exit 0, END ran, final `@ticks` dumped, no processes or temp dirs left |
+| Same four combinations: connection dropped (local ssh SIGKILL) | nothing left on the host |
+| Script that exits by itself (`BEGIN { exit(); }`) | session ends in 0.3 s |
+| `--dry-run` of a missing kprobe | non-zero exit, bpftrace's error on stderr |
+| Parameters `two words`, `$(touch /tmp/pwned)`, `'; rm -rf / #`, `--unsafe`, `-o`, tab, unicode | all arrived byte for byte; no file created |
+| Command ignoring SIGINT (with a background child) | SIGTERM after 5.1 s, exit 143, child gone too |
+| Command ignoring SIGINT and SIGTERM | SIGKILL after 7.1 s, exit 137, child gone too |
+| `pw` without a password (`sudo -n`) | `sudo: a password is required`, exit 1 |
+| `pw` with the password via `sudo -S` | exit 0, END ran, nothing left |
+| `pw` with a wrong password | `Sorry, try again.` seen in 2.5 s → bpfdeck gives up |
+| SSH session cost, plain vs. multiplexed (ControlMaster) | 55 ms vs. 9 ms per session |
 
-Needs `serde` derives on `OutputMsg`, `RunEvent`, `Validation`, `SystemInfo`,
-`BpftraceInfo` (serde is already a dependency). The agent writes each script to a private
-`0700` temp dir; `validate`/`run` refer to that file.
+Bugs found and fixed during the spike (these are why the details above look the way they
+do): dash block-reads the script (→ handshakes); bash executes the call line before
+reading the rest (→ call on the last line); SIGKILL cannot pass through `sudo` and left a
+root process holding the session (→ the runner itself runs as root, via the sudo line);
+delayed `kill`s could hit a reused pid (→ signals come from the parent shell via traps);
+dash's `kill` rejects `--` (→ `kill -INT -<pgid>`); a password sent right after the sudo
+line was swallowed by dash (→ `bpfdeck-remote: sudo` marker first).
 
-**Disconnect = stop.** EOF on stdin makes the agent stop any run gracefully (SIGINT, END
-runs) and exit, cleaning its temp dir — the "dropped connection" row above, without orphans.
+## What changes in bpfdeck
 
-### Connecting and deploying the agent
+**Connection** (before the TUI starts, in the normal terminal): bpfdeck runs
+`ssh -o ControlMaster=yes -o ControlPersist=… -o ControlPath=… -fN -- <host>` so that SSH
+itself asks for a key passphrase, password, 2FA or host key confirmation, exactly as the
+user is used to. All later sessions reuse that master with `-o BatchMode=yes` (never a
+prompt inside the TUI) and it is closed on exit (`ssh -O exit`). The system `ssh` binary is
+used, like `git` (D-004): keys, agent, `~/.ssh/config`, ProxyJump and known_hosts all apply.
+The host argument is validated (no leading `-`) and placed after `--`. The control socket
+lives in a private `0700` directory with a short path (unix socket paths are limited to
+~104 bytes, so `%C` hashes, not host names).
 
-- `bpfdeck --host [user@]host <source>`. The system `ssh` binary is used, as with `git`
-  (D-004): the user's keys, agent, `~/.ssh/config` aliases, jump hosts and known_hosts all
-  just work. `-o BatchMode=yes` so nothing prompts inside the TUI; auth errors are shown
-  with a hint to test `ssh host` by hand.
-- Only fixed remote command strings, with nothing user-supplied in them: `uname -m`,
-  `sha256sum <cache path>`, `cat > <cache path>.tmp`, `mv`, `<cache path> agent`. The cache
-  path is `~/.cache/bpfdeck/agent/bpfdeck-<sha256[..16]>` (hex only).
-- Which binary to push: the running one when the remote arch matches; otherwise
-  `--agent-binary <path>`, or a `bpfdeck-<arch>` file next to the local binary.
-- Upload once per version: stream to a temp name, verify the sha256 on the remote, rename,
-  `chmod 700`. Later connects just check the hash.
-- Privileges (D-018): log in as root, or `sudo -n` (NOPASSWD). bpfdeck never asks for or
-  forwards passwords. `--remote-sudo auto|always|never`, where auto means "use sudo if not root".
+**Privileges** (D-018): logged in as root → no sudo line. Otherwise `sudo -n`. If sudo needs
+a password, see question 1.
 
-### What changes in the UI
+**Execution layer:** a `Target` (local or SSH) given to the executor. For SSH targets:
+- `capture()` (detect, dry-run, `-l`) spawns `ssh … sh -s` and speaks the session protocol;
+  detection runs a fixed argv (`sh -c '<fixed probe of uname -r, id -u, lockdown,
+  bpftrace --version/--help>'`, no user data).
+- `runner::spawn` does the same; stop writes a line to the child's stdin instead of SIGINT.
+  The remote side escalates; locally, if the session is still open 10 s after a stop, the
+  ssh process is killed (EOF then stops the remote side anyway).
+- Everything above it is unchanged: JSON parsing, coalescing, panels, log, the spool and
+  exports (bpftrace's raw stdout arrives locally, byte for byte).
+- The validator's cache key already has bpftrace version and kernel; the host is added.
 
-- Status bar: `server01 (aarch64) · bpftrace v0.21.2 · 5.14.0-427… · root`.
-- Connection states: connecting / uploading agent / ready / lost. On loss, the run view
-  says the run was stopped on the host, and a reconnect action is offered.
-- Run confirmation names the host: **Run on server01 as root**, next to the exact command.
-- Validation results are per host (the cache key already has bpftrace version and kernel).
-- Exports are written locally; the raw NDJSON is fetched from the agent's spool.
-- `e` (editor), discovery, git: unchanged, all local.
+**UI:** status bar `server01 · bpftrace v0.21.2 · 5.14.0-427… · root via sudo`; the run
+confirmation says **Run on server01 as root**; connection states (connecting, ready, lost)
+and SSH errors (with ssh's own message) are shown; on a lost connection the run view says
+the run was stopped on the host.
 
-### Security
+## Security
 
-- The trust model is unchanged: scripts run as root on the target, only after the
-  confirmation (which now names the host), and `--unsafe` is a per-run opt-in (D-009).
-- No shell interpolation of user data on the remote (see the spike).
-- The pushed binary is verified by content hash and kept in a `0700` directory.
-- No listening sockets, no persistent processes: everything rides one SSH session.
-- Host key checking stays with the user's SSH config; bpfdeck never weakens it.
+- Nothing is installed or left on the host: the runner is in memory, the temp dir (`0700`)
+  is removed on exit, and a dropped connection stops bpftrace cleanly (tested).
+- The only remote command is the constant `sh -s`. User data (scripts, parameters) goes
+  through stdin with length/line framing, never through a shell command line.
+- The runner is a fixed text in the bpfdeck binary, reviewable (appendix), no templating.
+- SSH host key checking and auth policy stay with the user's configuration; bpfdeck never
+  weakens them. No listening sockets are opened on either side.
+- The trust model is unchanged: scripts run as root on the host, after a confirmation that
+  names the host; `--unsafe` is per-run opt-in (D-009).
+- A sudo password, if supported (question 1), is read without echo, kept only in memory
+  for the session, sent only over the encrypted SSH channel and only after the
+  `bpfdeck-remote: sudo` marker, and never written anywhere or passed on a command line.
 
-### Failure modes
+## Failure modes
 
 | Case | Behavior |
 |---|---|
-| SSH auth fails / host unreachable | Error screen with ssh's stderr and "try `ssh host` in a shell" |
-| sudo needs a password | Explain NOPASSWD or root login; nothing is prompted |
-| No agent binary for the remote arch | Error naming the arch and `--agent-binary` |
-| bpftrace missing / lockdown on the remote | Same as local: `?` / banner, but for that host |
-| Connection drops mid-run | Agent stops bpftrace gracefully and exits; UI shows "lost; run stopped on host" |
-| Slow link | Agent-side coalescing; the `dropped` counter shows text lines lost |
+| Host unreachable, auth fails, host key changed | ssh's own message before the TUI starts |
+| Master connection dies later | "connection lost"; runs stopped on the host by EOF; a reconnect action |
+| sudo needs a password and none was given | Clear message: use root, NOPASSWD, or the password option |
+| Wrong sudo password | Detected from `Sorry, try again.`; asked again (before the TUI) |
+| No `bpftrace` on the host | Same as local: `?` status, "not found on server01" (`--remote-bpftrace <path>` for odd PATHs) |
+| Kernel lockdown on the host | The red banner, for that host |
+| A handshake marker never arrives (odd shell, broken sudo config) | Timeout, the session's stderr shown |
+| No `setsid` on the host | Falls back to signalling bpftrace alone (children of `system()` could survive) |
 
-### Testing
+## Testing
 
-- Protocol encode/decode round-trip tests.
-- Agent tests in-process over pipes, with the fake bpftrace (no SSH).
-- `RemoteBackend` against a **fake `ssh`** (test hook `--ssh <path>`) that runs the agent
-  locally: the full remote path, with no network.
-- End to end over real SSH: `tests/realhost` gets the spike's sshd image.
+- The runner and the protocol are exercised without network through a **fake `ssh`**
+  (test hook `--ssh <path>`: a script that ignores the host and runs `sh -s` locally), with
+  the fake bpftrace. In CI (Ubuntu) `sh` is dash, so both read-ahead quirks are covered;
+  bash is tested by pointing the fake at `bash -s`.
+- `tests/realhost` gets the spike's sshd image (root, NOPASSWD user, password user) for
+  real SSH end-to-end runs.
 
-### Plan
+## Plan
 
 | Step | Content | Size |
 |---|---|---|
-| R1 | `Backend` trait; today's executor code becomes `LocalBackend`. No behavior change | S |
-| R2 | serde + protocol + `bpfdeck agent` over stdio; tests over pipes | M |
-| R3 | SSH transport: connect, arch check, upload + verify, hello; fake-ssh tests | M |
-| R4 | UI: host badge, connection states, errors, confirmation; export fetch | M |
-| R5 | Real end-to-end with the sshd container; spec/README; D-entries | S |
-
-Later, not in this proposal: fleet mode (validate on N hosts as a matrix, run on one), an
-agent download from GitHub releases.
+| R1 | `Target` in the bpftrace layer; local stays the default. Runner stop via stdin line as an option | S |
+| R2 | Embedded runner + session protocol (handshakes, framing, timeouts); fake-ssh tests on dash and bash | M |
+| R3 | `--host`: ControlMaster setup before the TUI, BatchMode sessions, teardown; sudo modes | M |
+| R4 | UI: host in status bar and confirmation, connection states and errors | S |
+| R5 | Real end-to-end via the sshd container; spec §3/§6 updates, README | S |
 
 ## Questions for you
 
-1. **Approach:** B (agent over SSH) as proposed, or only document A for now?
-2. **Privileges:** root login or NOPASSWD `sudo -n` only, never password prompts — OK?
-3. **Other architectures:** `--agent-binary` / a sibling `bpfdeck-<arch>` file. Should the
-   release tarballs ship both architectures to make that automatic?
-4. **Scope:** one host per session first, fleet later — OK?
-5. **Spec:** move "Remote execution over SSH" from out of scope (§3) to v1.1 once you approve.
+1. **sudo with a password:** support it (asked once before the TUI, like `ansible -K`, kept in
+   memory for the session), or only root / NOPASSWD sudo? The spike shows it works; the
+   cost is holding a password in memory.
+2. **Scripts from the laptop only** (local dir or git, sent per run) — or should
+   `--host` also be able to list scripts that already live on the server?
+3. **One host per session** first; fleet (validate a collection on N hosts) later — OK?
+4. **Minimum on the host:** `bpftrace`, POSIX `sh`, `mktemp`, `head -c`, optionally
+   `setsid` (all present on RHEL 8/9 and Debian/Ubuntu) — acceptable?
+
+## Appendix: the runner, verbatim (as tested)
+
+```sh
+# bpfdeck remote runner, sent over `ssh host sh -s` (after an optional fixed sudo line that
+# turns the session into a root `sh -s`): nothing is installed on the host.
+# Protocol on stdin, after the "ready" handshake: "bpfdeck-remote 1", argv count, one argv
+# entry per line, script length, script bytes.
+# After "started", any line or EOF on stdin stops the command: SIGINT, then SIGTERM
+# after 5 s, SIGKILL after 2 s more, to the command's whole process group. Signals are
+# sent by this shell (the command's parent), so the pid cannot have been reused. The
+# exit status is the command's.
+bpfdeck_main() {
+  umask 077
+  echo "bpfdeck-remote: ready" >&2
+  IFS= read -r version || exit 71
+  [ "$version" = "bpfdeck-remote 1" ] || { echo "bpfdeck-remote: bad header" >&2; exit 71; }
+  IFS= read -r n || exit 71
+  set --
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    IFS= read -r a || exit 71
+    set -- "$@" "$a"
+    i=$((i + 1))
+  done
+  IFS= read -r len || exit 71
+  d=$(mktemp -d "${TMPDIR:-/tmp}/bpfdeck.XXXXXX") || exit 72
+  trap 'rm -rf "$d"' EXIT
+  if [ "$len" -gt 0 ]; then
+    head -c "$len" > "$d/script.bt" || exit 72
+  fi
+  cd "$d" || exit 72
+  # Own process group (like the local runner), so children of bpftrace are signalled too.
+  if command -v setsid > /dev/null 2>&1; then
+    setsid "$@" < /dev/null &
+    g="-$!"
+  else
+    "$@" < /dev/null &
+    g="$!"
+  fi
+  p=$!
+  trap 'kill -INT "$g" 2>/dev/null' USR1
+  trap 'kill -TERM "$g" 2>/dev/null' USR2
+  trap 'kill -KILL "$g" 2>/dev/null' ALRM
+  echo "bpfdeck-remote: started" >&2
+  exec 3<&0
+  ( IFS= read -r _ <&3; kill -USR1 $$; sleep 5; kill -USR2 $$; sleep 2; kill -ALRM $$ ) > /dev/null 2>&1 &
+  w=$!
+  while :; do
+    wait "$p"
+    c=$?
+    kill -0 "$p" 2>/dev/null || break
+  done
+  kill "$w" 2>/dev/null
+  kill -KILL "$g" 2>/dev/null
+  exit "$c"
+}
+bpfdeck_main; exit $?
+```
