@@ -51,7 +51,16 @@ esac
 export FAKE_ROOT
 here="$(cd "$(dirname "$0")" && pwd)"
 case "$host" in
-  *nobpftrace*) PATH="$here/bin:$PATH" ;;
+  *nobpftrace*)
+    # Only the tools the runner and the facts program use, so a bpftrace installed on
+    # this machine (CI runners have one in /usr/bin) is not found either.
+    tools="${TMPDIR:-/tmp}/bpfdeck-fake-ssh-tools-$(/usr/bin/id -u)"
+    mkdir -p "$tools"
+    for t in bash dash zsh mktemp head rm setsid sleep cat sed uname grep tr cut env dirname; do
+      p=$(command -v "$t" 2> /dev/null) && [ -n "$p" ] && ln -sf "$p" "$tools/$t"
+    done
+    PATH="$here/bin:$tools"
+    ;;
   *) PATH="$here/bin:$here/bpftrace-bin:$PATH" ;;
 esac
 export PATH
