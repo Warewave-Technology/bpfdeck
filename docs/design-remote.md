@@ -1,7 +1,14 @@
-# Remote execution over SSH, agentless — design proposal
+# Remote execution over SSH, agentless — design
 
-**Status: proposal, awaiting the owner's approval. Nothing here is implemented.**
-Questions to answer are at the end. An earlier version proposed an agent binary on the
+**Status: approved and implemented (R1–R5, 2026-09-29).** The owner's answers to the
+questions at the end: sudo with a password yes; keys as proposed; `local` tab always shown,
+red with "no bpftrace" when it has none; layout as proposed (D-021). Implementation
+details that differ from or refine this text are in D-022 and D-023: one control socket
+per target (`<id>-%C`), keepalives plus a 10 s `-O check`, host facts sent as the
+session's script, and the runner un-ignoring SIGINT for its background job. To try it
+against a real kernel: `tests/realhost/sshd.sh` (docs/real-kernel-testing.md).
+
+An earlier version proposed an agent binary on the
 host; the owner rejected it (D-020): *nothing may be installed on the target*. Any host
 you can reach over SSH with admin rights must work, because this is for fixing problems
 on servers you did not prepare.

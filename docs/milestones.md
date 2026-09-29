@@ -81,6 +81,15 @@ flood (`// fake: flood=`) keeps key latency at 10–20 ms with nothing dropped; 
 test `tui::tests::flood_is_coalesced_and_accounted_for` checks accounting under a slow
 consumer (delivered + dropped = sent, snapshots coalesced, exit last).
 
+## M7 — Remote targets over SSH (docs/design-remote.md) ✅
+- [x] R1 Targets in the app model; bottom results pane with one tab per target (D-021)
+- [x] R2 Embedded runner + session protocol; SSH backend for capture/run; `tests/fake_ssh`
+- [x] R3 Connect dialog and checks, terminal handoff for interactive auth, master lifecycle, `d`
+- [x] R4 Validation on connect, host in confirmation and exports, lost connection + reconnect
+- [x] R5 Real end-to-end against sshd containers (root, NOPASSWD, password sudo;
+      `tests/realhost/sshd.sh`), docs; fixes it found are in D-022
+- [ ] Later: fleet mode (one script on several targets), validation matrix script × host
+
 ## M6 — Polish (optional, pick by value)
 - [x] Export current run (NDJSON raw + text rendering) to a file (`w`, spec §6.6)
 - [x] Tree view for script list (D-019)

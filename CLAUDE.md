@@ -30,6 +30,7 @@ cargo run -- --run params_demo.bt --param 1234 --param=--verbose tests/fixtures/
 sudo -E cargo run -- ...                       # real runs need root (D-005)
 cargo test                                     # must pass without root or bpftrace
 sudo -E cargo test -- --ignored                # real-kernel tests
+tests/realhost/sshd.sh                         # SSH target container for remote tests
 cargo fmt && cargo clippy --all-targets -- -D warnings
 cargo insta review                             # after intentional UI changes
 tests/realhost/run.sh --list tests/fixtures/scripts  # real bpftrace in a privileged container (D-016)
@@ -90,6 +91,7 @@ M5 done: panels (`model/hist.rs`, `model/panels.rs`, `ui/widgets/`), coalescing 
 (`bpftrace/coalesce.rs`), prioritized input channel + frame budget in `tui.rs`.
 M6 (partial): export (`w`, spool), release workflow (D-015), real-kernel harness (D-016).
 Tree view done (D-019); name final (D-017); root is the model (D-018).
-Open: remote execution — agentless design (D-020) in docs/design-remote.md, **awaiting
-owner approval**, do not implement before;
-RHEL/Debian 12 host checks. Remote `origin` is set; nothing pushed until release.
+M7 done: remote targets over SSH, agentless (docs/design-remote.md, D-020…D-023):
+`remote/`, `app/target.rs`, `app/connect.rs`, `ui/results.rs`, `tests/fake_ssh/`,
+`tests/realhost/sshd.sh`. Next: fleet mode (one script on several targets).
+Open: RHEL/Debian 12 host checks. Remote `origin` is set; nothing pushed until release.

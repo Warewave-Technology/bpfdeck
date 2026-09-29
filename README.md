@@ -36,15 +36,21 @@ CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld \
 ```
 
 ## Remote hosts
-Today: copy the static binary and run the TUI there over SSH (scripts must be on that host,
-or use a git URL it can reach):
-```sh
-scp bpfdeck server01:/tmp/ && ssh -t server01 sudo /tmp/bpfdeck https://github.com/bpftrace/bpftrace
-```
-Driving a remote host from the local TUI is proposed in `docs/design-remote.md`.
+Press `c` in the TUI, type a host (`10.0.3.14`, `ops@db-02`, or an `~/.ssh/config` alias),
+pick how to become root (automatic: root login or `sudo -n`; root login; sudo with a
+password), `Enter`. bpfdeck checks SSH, root, bpftrace and the kernel, opens a results tab
+for the host and validates every script there. From then on `Enter` runs the script on
+the selected tab's host: the script is copied over the SSH session for that run and
+removed afterwards. `<` `>` switch tabs, `d` disconnects.
+
+Nothing is installed on the host: it needs `bpftrace`, a POSIX `sh` and coreutils. Your
+`ssh` and its config are used as they are (keys, agent, ProxyJump, known_hosts); if SSH
+has to ask for a passphrase or password, bpfdeck hands it the terminal. Details:
+`docs/design-remote.md`. To try it against a container: `tests/realhost/sshd.sh`.
 
 ## Keys worth knowing
 `Enter` run (params form → confirmation) · `x` stop (SIGINT, keeps the exit-time dump) ·
+`c` connect a host · `<` `>` target tabs ·
 `Tab` next panel · `w` export the run (`.txt` report + raw `.ndjson`, see `--export-dir`) ·
 `?` all keys.
 

@@ -24,14 +24,15 @@ output as live histograms, top-tables and a filterable event log — in a Gruvbo
 - Source: local path or git URL (`https://…`, `git@…`, `ssh://…`), optional `#ref` suffix
   for branch/tag/commit (`https://github.com/bpftrace/bpftrace#v0.27.0`).
 - Linux only. Targets: RHEL 8/9 family and Debian/Ubuntu (see decisions D-008).
-- Single host (the one bpfdeck runs on).
+- Targets: the host bpfdeck runs on, plus SSH hosts connected from inside the TUI (§6.9).
+  Nothing is installed on them (D-020).
 
 ### Out of scope (v1) — do not build, do not stub
 - BCC Python tools, libbpf/CO-RE binaries, raw BPF object files.
-- Remote execution over SSH, fleet mode.
+- Fleet mode: one script on several hosts at once (targets are tabs so it can come later).
 - Editing scripts inside the TUI (open in `$EDITOR` is fine, see §6.6).
 - Persisting run history to disk (M6 is optional export only).
-- Any network access other than the `git` subprocess for cloning.
+- Any network access other than the `git` subprocess for cloning and `ssh` for targets.
 
 ## 4. Core flow
 
@@ -41,7 +42,8 @@ bpfdeck <path|git-url>
   → discover scripts (walk tree)
   → parse metadata (header comment, probes, params, unsafe calls)
   → validate against this kernel (background, cached per script hash)
-  → user browses list, reads source/info
+  → optionally `c`: connect to SSH hosts, each a results tab, validated there too (§6.9)
+  → user browses list, reads source/info (for the selected target tab)
   → user runs a script: params form (if any) → confirm dialog → run view (D-014)
   → live output: hist / map table / stats / log
   → stop (SIGINT → final END output → exit) → output stays viewable
@@ -115,7 +117,13 @@ Always shown before execution. Contents:
   space in text fields), `Enter` continue to the confirmation, `Esc` cancel.
 
 ### 5.4 Run view
-Replaces the right pane (list stays visible, can be hidden with `z` for full width).
+Lives in the results pane at the bottom: one tab per target (`local` first, then connected
+hosts; `<` `>` switch, `+` connects). The selected tab is the active target: the list's
+status glyphs, the Info/Validation tabs and `Enter` refer to it. The pane is three rows
+high until a run exists or it has the focus (`o`), then most of the screen; `z` gives it
+the whole screen. Tab glyphs: `▶` running, `✓`/`✗` last run, `✗` connection lost; a
+target without bpftrace (or with a lost connection) is drawn red, `local · no bpftrace`.
+One run per target; runs on different targets go on together (D-021).
 
 Header (two lines, so it fits next to the list at 80 columns): script name, state
 (`starting | running | stopping | exited(code) | killed(sig) | failed`), elapsed time;
@@ -256,6 +264,11 @@ runs will fail and the banner explains why.
   queued messages for at most ~30 ms before drawing. Measured with the fake bpftrace
   flooding 10M printf lines: keys show on screen within 10–20 ms.
 
+- Remote targets (§6.9): the same argv with the script path `script.bt`; the script is
+  sent over the SSH session and deleted when the run ends. A stop writes a line to the
+  session instead of signalling; the host side does SIGINT → SIGTERM (5 s) → SIGKILL (2 s)
+  to bpftrace's process group, and a dropped connection stops it the same way.
+
 ### 6.6 Export (M6)
 - `w` in the run view writes `<export dir>/bpfdeck-<script>-<UTC yyyymmdd-hhmmss>.txt`
   (header, panels in bpftrace's text format, the log) and `.ndjson` (bpftrace's raw stdout,
@@ -282,6 +295,26 @@ runs will fail and the banner explains why.
 - Terminal min size 80×24; below that render a "terminal too small" message only.
 - Mouse: not required in v1.
 
+### 6.9 Remote targets (docs/design-remote.md, D-020…D-023)
+- `c` (or `+`) opens the connect dialog: host (IP, name, `user@host`, `~/.ssh/config`
+  alias), port, sudo mode (automatic: root login or `sudo -n`; root login; sudo with a
+  password, typed masked and kept in memory while connected), optional bpftrace path.
+- Checks, shown as they finish; the first hard failure stops with the reason: ssh
+  (connected as, latency), host (OS, arch, kernel), shell tools (no `setsid` is a
+  warning), root, bpftrace (version, path, `--dry-run`), kernel (lockdown, BTF).
+  If SSH needs a person (passphrase, password, 2FA, unknown host key), `Enter` suspends
+  the TUI and runs `ssh -fN` in the terminal; bpfdeck never sees those secrets.
+- The system `ssh` is used (config, agent, ProxyJump, known_hosts apply), one master
+  connection per target (`/tmp/bpfdeck-<uid>/<id>-%C`, 0700), every operation a session
+  `ssh … -- host sh -s` over it, with a fixed runner program on stdin. Nothing is
+  installed or left on the host.
+- The source is resolved once, locally, and shared by all targets. On connect, every
+  script is validated on the host (its own kernel and bpftrace).
+- The master is checked every 10 s; when it is gone the tab turns `✗`, runs there end
+  (the host stops bpftrace on EOF), `c` reconnects (same tab) and `d` closes the tab.
+  `d` disconnects (asks while a run is active); quitting closes every master.
+- Exports from a remote tab carry the host in the file name and the report.
+
 ## 7. Privileges
 
 bpftrace needs root (or CAP_BPF + CAP_PERFMON + CAP_SYS_RESOURCE, plus CAP_SYS_ADMIN
@@ -289,7 +322,8 @@ on older kernels). v1 model: **run bpfdeck itself with sudo**. At startup:
 - euid 0 → fine.
 - not root → still start (browsing, reading, heuristic `-l` validation may partly work),
   status bar shows `NO PRIV` in red, run confirmation shows why it will fail.
-See decisions D-005 for the planned privilege-separated model.
+Running as root is the model (D-018). On SSH targets the session becomes root through
+the login (root), `sudo -n`, or `sudo -S` with the password from the connect dialog.
 
 ## 8. Non-functional
 
@@ -317,6 +351,9 @@ See decisions D-005 for the planned privilege-separated model.
 | `x`, `Ctrl-C` | run view | stop run (SIGINT to bpftrace) |
 | `j/k`, `PgUp/PgDn`, `g/G` | run view | scroll the log (up pauses, `G` follows) |
 | `o` | list | show the last run |
+| `c`, `+` | list, run view | connect to a host (new results tab) |
+| `<` `>` | list, run view | previous/next target tab |
+| `d` | list, run view | disconnect the selected host |
 | `p` | log | pause/follow |
 | `[` `]` | hist panel | previous/next key |
 | `s` | table panel | toggle sort |

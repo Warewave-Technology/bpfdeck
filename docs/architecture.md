@@ -12,6 +12,10 @@ src/
   tui.rs             terminal init/restore, input thread, signals, Msg loop, executor
   app/               App state + reducer: fn update(&mut self, Msg) -> Vec<Cmd>
     mod.rs
+    target.rs        targets (local + SSH hosts): connection, bpftrace, run, log view
+    connect.rs       connect dialog form, connect/lost/disconnect handling
+    run.rs           run flow: params form, confirmation, run view actions
+    tree.rs          tree/flat list rows
     filter.rs        fuzzy filter (nucleo-matcher)
   msg.rs             Msg (input from the world) and Cmd (side effects to perform)
   catalog.rs         resolve + discover + read + extract metadata (blocking)
@@ -47,6 +51,13 @@ src/
     run_view.rs      header + log (panel layout in M5)
     modals.rs        params form, run confirmation, yes/no question
     widgets/         hist.rs, table.rs, value.rs, stats.rs, tseries.rs (one per panel kind)
+  remote/            SSH targets, agentless (docs/design-remote.md, D-020…D-023)
+    mod.rs           Dest (validated host/user/port)
+    runner.sh        the fixed POSIX sh runner sent on every session
+    session.rs       one `ssh … sh -s` session: sudo/runner handshakes, capture, runs;
+                     Backend { Local, Ssh } used by detection and the validator
+    connect.rs       connect checks, control dir, ssh master open/check/close
+    facts.rs         pure: host facts program and its parser
   sys.rs             privilege check, lockdown detection, kernel release (/proc)
   headless.rs        `--list` / `--run <ID>`: debug entry points without the TUI
 ```
@@ -96,6 +107,9 @@ Elm-style loop, single owner of state:
 - bpfdeck installs handlers for SIGTERM/SIGHUP → stop child, restore terminal, exit.
 - bpfdeck's own Ctrl-C while in raw mode arrives as a key event, not SIGINT —
   handle it in the keymap.
+- Remote runs: the child is the local `ssh` (own group, killed on drop, which stops the
+  host side by EOF). Stop writes a line to its stdin; the runner on the host escalates.
+  If the session is still open 10 s later, the local ssh is killed.
 
 ## Rendering
 
@@ -123,4 +137,9 @@ Elm-style loop, single owner of state:
   script (see the header of `fake-bpftrace.sh`), not env vars, so parallel tests stay
   isolated. `fake-bpftrace-old.sh` is an old version without `--dry-run`. Point
   `--bpftrace` at either.
+- Remote targets use **`tests/fake_ssh/fake-ssh.sh`**: it ignores the host and runs the
+  remote command locally, with a fake `sudo`/`id` and the fake bpftrace in PATH; host
+  names select behaviors (`unreachable`, `needs-auth`, `pwsudo`, `rootlogin`,
+  `nobpftrace`, `dropped`). The TUI takes it with the hidden `--ssh <path>` flag. Real
+  SSH end to end: `tests/realhost/sshd.sh` (docs/real-kernel-testing.md).
 - Real-kernel tests are `#[ignore]` and run manually with `sudo -E cargo test -- --ignored`.

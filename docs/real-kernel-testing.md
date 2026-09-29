@@ -18,6 +18,22 @@ bpftrace version, one unusual kernel, pid namespaces. Known quirks of this envir
 - `tid`/`pid` in a container pid namespace make `get_ns_current_pid_tgid` fail: tens of
   thousands of `helper_error` messages per second. Useful as a stress case.
 
+## SSH targets (remote execution)
+
+`tests/realhost/sshd.sh` starts the same image with sshd on `127.0.0.1:22022` (`PORT=`
+to change) and three users: `root` (key), `ops` (sudo without password), `pw` (sudo
+password `secret-pw`). It creates a throwaway key and an ssh wrapper in
+`$TMPDIR/bpfdeck-sshd`; pass the wrapper with `--ssh` and connect to `ops@target`,
+`pw@target` or `root@target` with `c`. Stop it with `docker rm -f bpfdeck-sshd`.
+
+Checked on 2026-09-29 (bpftrace 0.23.2, kernel 7.0 OrbStack): all three login/sudo
+modes; wrong sudo password; runs streaming and stopping with the exit-time dump; a
+killed master (`ssh -O exit`) during a run: exit 255 with an explanation in the log, tab
+`✗` within 10 s, nothing left on the host (no bpftrace, no `/tmp/bpfdeck.*`), `c`
+reconnects the same tab; `d` and quitting leave no ssh processes or sockets; the sudo
+password never appears in a process list on either side; the bpftrace repo's tools
+validated on two targets at once (34 of 45 need a newer bpftrace than 0.23.2).
+
 ## Findings (2026-09-28)
 
 | Check | Result |

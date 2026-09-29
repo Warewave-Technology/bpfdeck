@@ -104,3 +104,31 @@ must work as is, since the point is fixing problems on machines nobody prepared.
 agent proposal (docs/design-remote.md history, c466bcc) is withdrawn; the agentless design
 (a fixed POSIX sh runner sent over `ssh host sh -s`) is in docs/design-remote.md, awaiting
 approval. — accepted
+
+**D-021 — Targets as result tabs; one run per target.** Supersedes D-010's single run:
+the owner approved docs/design-remote.md (2026-09-29) with the connect dialog inside the
+TUI (`c`/`+`, no `--host` flag), `<` `>` to switch tabs, `d` to disconnect, the `local`
+tab always present (red `no bpftrace` when missing) and sudo with a password. Each target
+has its own validation results and at most one run; runs on different targets can go
+on together. The source is resolved once, locally, for all targets. — accepted
+
+**D-022 — Remote implementation details.** (1) One ssh master per *target*, socket
+`/tmp/bpfdeck-<uid>/<id>-%C` (0700, owner-checked, short for the ~104-byte limit): with a
+per-host `%C` a retry met the previous attempt's socket and left a non-master `ssh -N`
+running, and two tabs for one `user@host:port` would share and close one master. A
+failed connect attempt closes its master. (2) Masters use ServerAlive keepalives and are
+checked with `ssh -O check` every 10 s; a dead one marks the tab lost. (3) Host facts come
+from a fixed sh program sent as the session's script (`sh script.bt`), because argv lines
+cannot carry a multi-line program. (4) The sudo password lives only in the executor's
+`SshTarget` (its `Debug` is redacted), is sent over the session's stdin after the
+`bpfdeck-remote: sudo` marker for each operation, and is never on a command line. (5) A
+remote run's handle exists before its handshake ends (`runner::start_deferred`), so a
+stop or quit during the handshake is not lost. — accepted
+
+**D-023 — SIGINT and the runner's background job.** POSIX sh starts background jobs with
+SIGINT ignored, and a shell script cannot trap a signal ignored on entry. The runner
+un-ignores it (`trap - INT QUIT` in the job's subshell) where the shell allows it (bash 5,
+zsh; not dash or bash 3.2). Real bpftrace installs its own handler, so on hosts this only
+matters for shell wrappers around bpftrace; for tests, the fake host's `sh`
+(`tests/fake_ssh/bin/sh`) prefers zsh or bash 5 so the fake bpftrace sees the SIGINT and
+prints its exit-time dump. — accepted
