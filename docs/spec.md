@@ -316,6 +316,14 @@ runs will fail and the banner explains why.
 - `c` (or `+`) opens the connect dialog: host (IP, name, `user@host`, `~/.ssh/config`
   alias), port, sudo mode (automatic: root login or `sudo -n`; root login; sudo with a
   password, typed masked and kept in memory while connected), optional bpftrace path.
+- The host field takes a list (F1, D-024): `db-01 db-02`, commas, and numeric ranges
+  `db-0{1..4}` / `10.0.3.{11..14}` (zero padding kept), expanded locally, at most 20,
+  duplicates dropped. Port, sudo mode, password and bpftrace path apply to all. Hosts are
+  checked in parallel, one line each (✓ summary, ✗ failing check, … progress, ! needs
+  SSH auth); each host that passes gets its tab (the first one becomes active) and is
+  validated. With failures the dialog stays: Enter tries again the hosts that are not
+  connected (connected ones are skipped), Esc closes and keeps them. Hosts needing
+  interactive SSH auth are done in the terminal one after the other.
 - Checks, shown as they finish; the first hard failure stops with the reason: ssh
   (connected as, latency), host (OS, arch, kernel), shell tools (no `setsid` is a
   warning), root, bpftrace (version, path, `--dry-run`), kernel (lockdown, BTF).

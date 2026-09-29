@@ -45,14 +45,48 @@ impl SudoMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Phase {
     Editing,
-    /// Checks are running for `attempt`.
+    /// Checks are running for at least one host.
     Checking,
-    /// SSH needs a person; Enter continues in the terminal. ssh's message.
+    /// Nothing is checking and SSH needs a person for some hosts: Enter continues in the
+    /// terminal, one host after the other. ssh's message for the first of them.
     NeedsAuth(String),
+}
+
+/// One host of a connect attempt (docs/design-fleet.md, F1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostRow {
+    pub dest: Dest,
+    /// Id of this host's current attempt; results of older (cancelled) ones are ignored.
+    pub attempt: u64,
+    /// Tab id the host gets when it connects.
+    pub target: TargetId,
+    pub checks: Vec<Check>,
+    pub state: RowState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RowState {
+    Checking,
+    /// `Rocky 9.4 · 5.14.0-427 · bpftrace v0.21.2 · root via sudo`.
+    Connected(String),
+    Failed,
+    NeedsAuth(String),
+}
+
+impl HostRow {
+    pub fn label(&self) -> String {
+        self.dest.label()
+    }
+
+    /// The check that failed, if any.
+    pub fn failure(&self) -> Option<&Check> {
+        self.checks.iter().rev().find(|c| c.status == CheckStatus::Fail)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectForm {
+    /// One host, or a list: `db-01 db-02`, `db-0{1..4}` (`remote::expand_hosts`).
     pub host: String,
     pub port: String,
     pub sudo: SudoMode,
@@ -60,11 +94,11 @@ pub struct ConnectForm {
     /// bpftrace path on the host; empty = look it up in root's PATH.
     pub bpftrace: String,
     pub focus: Field,
-    pub phase: Phase,
-    /// Id of the current attempt; results of older (cancelled) ones are ignored.
-    pub attempt: u64,
-    pub checks: Vec<Check>,
+    /// The hosts of the last submit (connected ones stay listed).
+    pub rows: Vec<HostRow>,
     pub error: Option<String>,
+    /// A tab of this dialog became the active one (the first host that connects).
+    activated: bool,
 }
 
 impl ConnectForm {
@@ -76,11 +110,28 @@ impl ConnectForm {
             password: Secret::default(),
             bpftrace: String::new(),
             focus: Field::Host,
-            phase: Phase::Editing,
-            attempt: 0,
-            checks: Vec::new(),
+            rows: Vec::new(),
             error: None,
+            activated: false,
         }
+    }
+
+    pub fn phase(&self) -> Phase {
+        if self.rows.iter().any(|r| r.state == RowState::Checking) {
+            return Phase::Checking;
+        }
+        match self.rows.iter().find_map(|r| match &r.state {
+            RowState::NeedsAuth(m) => Some(m.clone()),
+            _ => None,
+        }) {
+            Some(message) => Phase::NeedsAuth(message),
+            None => Phase::Editing,
+        }
+    }
+
+    /// How many hosts the host field names now (`None`: it does not parse).
+    pub fn host_count(&self) -> Option<usize> {
+        crate::remote::expand_hosts(&self.host).ok().map(|h| h.len())
     }
 
     /// Fields in focus order (the password only with "sudo with password").
@@ -135,7 +186,13 @@ impl ConnectForm {
     }
 
     fn checking(&self) -> bool {
-        self.phase == Phase::Checking
+        self.phase() == Phase::Checking
+    }
+
+    fn row(&mut self, attempt: u64) -> Option<&mut HostRow> {
+        self.rows
+            .iter_mut()
+            .find(|r| r.attempt == attempt && r.state == RowState::Checking)
     }
 }
 
@@ -170,7 +227,15 @@ impl App {
             return;
         }
         // Editing after "ssh needs you": the next Enter tries without the terminal again.
-        form.phase = Phase::Editing;
+        for row in &mut form.rows {
+            if let RowState::NeedsAuth(message) = &row.state {
+                row.checks.push(Check {
+                    status: CheckStatus::Fail,
+                    text: format!("ssh: {message}"),
+                });
+                row.state = RowState::Failed;
+            }
+        }
         match key.code {
             KeyCode::Char(c)
                 if !key
@@ -190,13 +255,17 @@ impl App {
         };
         match action {
             Action::Close => {
-                let attempt = form.attempt;
-                let cancelled = form.checking();
+                let cancel: Vec<Cmd> = form
+                    .rows
+                    .iter()
+                    .filter(|r| r.state == RowState::Checking)
+                    .map(|r| Cmd::CancelConnect { attempt: r.attempt })
+                    .collect();
                 self.overlay = None;
-                if cancelled {
+                if !cancel.is_empty() {
                     self.notify(Level::Info, "connect cancelled".into());
-                    return vec![Cmd::CancelConnect { attempt }];
                 }
+                return cancel;
             }
             _ if form.checking() => {}
             Action::NextField => form.step(1),
@@ -204,108 +273,151 @@ impl App {
             Action::PrevChoice if form.focus == Field::Sudo => form.cycle_sudo(-1),
             Action::NextChoice if form.focus == Field::Sudo => form.cycle_sudo(1),
             Action::Submit => {
-                let interactive = matches!(form.phase, Phase::NeedsAuth(_));
-                return self.submit_connect(interactive);
+                return if matches!(form.phase(), Phase::NeedsAuth(_)) {
+                    self.authenticate_in_terminal()
+                } else {
+                    self.submit_connect()
+                };
             }
             _ => {}
         }
         Vec::new()
     }
 
-    fn submit_connect(&mut self, interactive: bool) -> Vec<Cmd> {
-        // A lost target may be connected again; its tab is then replaced.
-        let labels: Vec<String> = self
-            .targets
-            .iter()
-            .filter(|t| !t.lost())
-            .map(|t| t.label.clone())
-            .collect();
-        let attempt = self.next_attempt;
-        let target = self.next_target_id;
-        let Some(form) = self.connect_form() else {
-            return Vec::new();
-        };
-        let dest = match Dest::parse(&form.host, &form.port) {
-            Ok(dest) => dest,
-            Err(e) => {
-                form.error = Some(e.to_string());
-                form.focus = Field::Host;
-                return Vec::new();
-            }
-        };
-        if labels.contains(&dest.label()) {
-            form.error = Some(format!(
-                "already connected to {}: switch tabs with < >",
-                dest.label()
-            ));
-            return Vec::new();
-        }
+    /// The sudo mode and bpftrace path of the form, or `None` after setting an error.
+    fn connect_options(form: &mut ConnectForm) -> Option<(SudoChoice, Option<String>)> {
         let sudo = match form.sudo {
             SudoMode::Auto => SudoChoice::Auto,
             SudoMode::Root => SudoChoice::Root,
             SudoMode::Password if form.password.is_empty() => {
                 form.error = Some("enter the sudo password".into());
                 form.focus = Field::Password;
-                return Vec::new();
+                return None;
             }
             SudoMode::Password => SudoChoice::Password(form.password.clone()),
         };
         let bpftrace = Some(form.bpftrace.trim().to_string()).filter(|p| !p.is_empty());
-        form.attempt = attempt;
-        form.phase = Phase::Checking;
-        form.checks.clear();
-        form.error = None;
-        self.next_attempt += 1;
-        self.next_target_id += 1;
-        vec![Cmd::Connect {
-            attempt,
-            target,
-            dest,
-            sudo,
-            bpftrace,
-            interactive,
-        }]
+        Some((sudo, bpftrace))
     }
 
-    /// The form of `attempt`, if it is still the one on screen.
-    fn attempt_form(&mut self, attempt: u64) -> Option<&mut ConnectForm> {
-        self.connect_form()
-            .filter(|f| f.attempt == attempt && f.phase == Phase::Checking)
+    /// Enter: check every host of the field that is not connected yet, all at once.
+    fn submit_connect(&mut self) -> Vec<Cmd> {
+        // A lost target may be connected again; its tab is then replaced.
+        let connected: Vec<String> = self
+            .targets
+            .iter()
+            .filter(|t| !t.lost())
+            .map(|t| t.label.clone())
+            .collect();
+        let (mut attempt, mut target) = (self.next_attempt, self.next_target_id);
+        let Some(form) = self.connect_form() else {
+            return Vec::new();
+        };
+        let dests = match crate::remote::expand_hosts(&form.host).and_then(|hosts| {
+            hosts
+                .iter()
+                .map(|h| Dest::parse(h, &form.port))
+                .collect::<Result<Vec<_>, _>>()
+        }) {
+            Ok(dests) => dests,
+            Err(e) => {
+                form.error = Some(e.to_string());
+                form.focus = Field::Host;
+                return Vec::new();
+            }
+        };
+        let (fresh, already): (Vec<Dest>, Vec<Dest>) =
+            dests.into_iter().partition(|d| !connected.contains(&d.label()));
+        if fresh.is_empty() {
+            form.error = Some(match already.as_slice() {
+                [one] => format!("already connected to {}: switch tabs with < >", one.label()),
+                _ => "all of these hosts are connected already: switch tabs with < >".into(),
+            });
+            return Vec::new();
+        }
+        let Some((sudo, bpftrace)) = Self::connect_options(form) else {
+            return Vec::new();
+        };
+        form.error = None;
+        form.activated = false;
+        form.rows.retain(|r| matches!(r.state, RowState::Connected(_)));
+        let mut cmds = Vec::new();
+        for dest in fresh {
+            form.rows.push(HostRow {
+                dest: dest.clone(),
+                attempt,
+                target,
+                checks: Vec::new(),
+                state: RowState::Checking,
+            });
+            cmds.push(Cmd::Connect {
+                attempt,
+                target,
+                dest,
+                sudo: sudo.clone(),
+                bpftrace: bpftrace.clone(),
+                interactive: false,
+            });
+            attempt += 1;
+            target += 1;
+        }
+        (self.next_attempt, self.next_target_id) = (attempt, target);
+        cmds
+    }
+
+    /// Enter after "ssh needs you": open those hosts' masters in the terminal, one after
+    /// the other (the executor runs the commands in order), then check them.
+    fn authenticate_in_terminal(&mut self) -> Vec<Cmd> {
+        let mut attempt = self.next_attempt;
+        let Some(form) = self.connect_form() else {
+            return Vec::new();
+        };
+        let Some((sudo, bpftrace)) = Self::connect_options(form) else {
+            return Vec::new();
+        };
+        let mut cmds = Vec::new();
+        for row in &mut form.rows {
+            if matches!(row.state, RowState::NeedsAuth(_)) {
+                row.attempt = attempt;
+                row.state = RowState::Checking;
+                row.checks.clear();
+                cmds.push(Cmd::Connect {
+                    attempt,
+                    target: row.target,
+                    dest: row.dest.clone(),
+                    sudo: sudo.clone(),
+                    bpftrace: bpftrace.clone(),
+                    interactive: true,
+                });
+                attempt += 1;
+            }
+        }
+        self.next_attempt = attempt;
+        cmds
     }
 
     pub(super) fn on_connect_check(&mut self, attempt: u64, check: Check) {
-        if let Some(form) = self.attempt_form(attempt) {
-            form.checks.push(check);
+        if let Some(row) = self.connect_form().and_then(|f| f.row(attempt)) {
+            row.checks.push(check);
         }
     }
 
     pub(super) fn on_connect_needs_auth(&mut self, attempt: u64, message: String) {
-        if let Some(form) = self.attempt_form(attempt) {
-            form.phase = Phase::NeedsAuth(message);
+        if let Some(row) = self.connect_form().and_then(|f| f.row(attempt)) {
+            row.state = RowState::NeedsAuth(message);
         }
     }
 
     pub(super) fn on_connect_failed(&mut self, attempt: u64, reason: Option<String>) {
-        if let Some(form) = self.attempt_form(attempt) {
-            form.phase = Phase::Editing;
-            let failed = form
-                .checks
-                .iter()
-                .rev()
-                .find(|c| c.status == CheckStatus::Fail)
-                .map(|c| c.text.clone())
-                .unwrap_or_default();
-            if failed.starts_with("bpftrace") {
-                form.focus = Field::Bpftrace;
-            } else if failed.starts_with("root") {
-                form.focus = if form.sudo == SudoMode::Password {
-                    Field::Password
-                } else {
-                    Field::Sudo
-                };
+        if let Some(row) = self.connect_form().and_then(|f| f.row(attempt)) {
+            if let Some(reason) = reason {
+                row.checks.push(Check {
+                    status: CheckStatus::Fail,
+                    text: reason,
+                });
             }
-            form.error =
-                Some(reason.unwrap_or_else(|| "fix the failed check, then Enter tries again".into()));
+            row.state = RowState::Failed;
+            self.after_connect_row();
         }
     }
 
@@ -318,42 +430,119 @@ impl App {
         host: SystemInfo,
         bpftrace: (BpftraceInfo, Strategy),
     ) -> Vec<Cmd> {
-        if self.attempt_form(attempt).is_none() {
+        let summary = [
+            info.os.clone(),
+            host.kernel_release.clone(),
+            format!(
+                "bpftrace {}",
+                bpftrace
+                    .0
+                    .version
+                    .map_or_else(|| bpftrace.0.version_raw.clone(), |v| v.to_string())
+            ),
+            info.privilege.clone(),
+        ]
+        .into_iter()
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ");
+        let Some(form) = self.connect_form() else {
+            return vec![Cmd::Disconnect { target: id }];
+        };
+        let Some(row) = form.row(attempt) else {
             // Cancelled meanwhile: close what was opened.
             return vec![Cmd::Disconnect { target: id }];
-        }
-        self.overlay = None;
+        };
+        row.state = RowState::Connected(summary);
+        // The first host of this dialog that connects becomes the active tab.
+        let activate = !std::mem::replace(&mut form.activated, true);
         let label = dest.label();
-        let privilege = info.privilege.clone();
         let mut target = Target::new(id, label.clone(), TargetKind::Ssh(dest));
         target.remote = Some(info);
         let mut cmds = Vec::new();
-        match self.targets.iter().position(|t| t.lost() && t.label == label) {
+        let index = match self.targets.iter().position(|t| t.lost() && t.label == label) {
             Some(i) => {
                 let old = self.targets[i].id;
                 for entry in &mut self.entries {
                     entry.validations.remove(&old);
                 }
                 self.targets[i] = target;
-                self.active = i;
                 cmds.push(Cmd::Disconnect { target: old });
+                i
             }
             None => {
                 self.targets.push(target);
-                self.active = self.targets.len() - 1;
+                self.targets.len() - 1
             }
+        };
+        if activate {
+            self.active = index;
+            self.screen = Screen::Browser;
+            self.scroll.set(0);
         }
-        self.screen = Screen::Browser;
-        self.scroll.set(0);
         cmds.extend(self.on_env(id, host, Ok(bpftrace)));
-        self.notify(
-            Level::Info,
-            format!(
-                "connected to {label} ({privilege}); validating {} scripts there",
-                self.entries.len()
-            ),
-        );
+        self.after_connect_row();
         cmds
+    }
+
+    /// A host finished: when none is left checking, close the dialog if all connected,
+    /// else say what failed and where to fix it.
+    fn after_connect_row(&mut self) {
+        let scripts = self.entries.len();
+        let Some(form) = self.connect_form() else {
+            return;
+        };
+        if form.phase() != Phase::Editing {
+            return;
+        }
+        let total = form.rows.len();
+        let connected: Vec<String> = form
+            .rows
+            .iter()
+            .filter(|r| matches!(r.state, RowState::Connected(_)))
+            .map(HostRow::label)
+            .collect();
+        if connected.len() == total {
+            let what = match connected.as_slice() {
+                [one] => {
+                    let privilege = self
+                        .targets
+                        .iter()
+                        .find(|t| &t.label == one)
+                        .and_then(|t| t.remote.as_ref())
+                        .map(|r| r.privilege.clone())
+                        .unwrap_or_default();
+                    format!("connected to {one} ({privilege}); validating {scripts} scripts there")
+                }
+                _ => format!("connected to {total} hosts; validating {scripts} scripts on each"),
+            };
+            self.overlay = None;
+            self.notify(Level::Info, what);
+            return;
+        }
+        let failed = form
+            .rows
+            .iter()
+            .find_map(|r| r.failure())
+            .map(|c| c.text.clone())
+            .unwrap_or_default();
+        if failed.starts_with("bpftrace") {
+            form.focus = Field::Bpftrace;
+        } else if failed.starts_with("root") {
+            form.focus = if form.sudo == SudoMode::Password {
+                Field::Password
+            } else {
+                Field::Sudo
+            };
+        }
+        form.error = Some(if total == 1 {
+            "fix the failed check, then Enter tries again".into()
+        } else {
+            format!(
+                "{} of {total} connected; fix the failures, then Enter tries the others again",
+                connected.len()
+            )
+        });
     }
 
     pub(super) fn on_connection_lost(&mut self, id: TargetId, reason: String) {
@@ -462,7 +651,7 @@ mod tests {
                 interactive: false,
             }]
         );
-        assert_eq!(form(&app).phase, Phase::Checking);
+        assert_eq!(form(&app).phase(), Phase::Checking);
         // Typing while checking does nothing.
         type_text(&mut app, "x");
         assert_eq!(form(&app).host, "ops@db-02");
@@ -470,7 +659,7 @@ mod tests {
             attempt: 1,
             check: checks()[0].clone(),
         });
-        assert_eq!(form(&app).checks.len(), 1);
+        assert_eq!(form(&app).rows[0].checks.len(), 1);
         app = ready();
         let cmds = connect(&mut app, "ops@db-02");
         assert!(app.overlay.is_none());
@@ -560,7 +749,7 @@ mod tests {
             reason: None,
         });
         assert_eq!(
-            (form(&app).phase.clone(), form(&app).focus),
+            (form(&app).phase(), form(&app).focus),
             (Phase::Editing, Field::Bpftrace)
         );
         type_text(&mut app, "/opt/bpftrace");
@@ -575,7 +764,7 @@ mod tests {
             attempt: 2,
             message: "db-02: Permission denied (publickey,password).".into(),
         });
-        assert!(matches!(form(&app).phase, Phase::NeedsAuth(_)));
+        assert!(matches!(form(&app).phase(), Phase::NeedsAuth(_)));
         let cmds = press(&mut app, KeyCode::Enter);
         assert!(
             matches!(
@@ -658,6 +847,164 @@ mod tests {
                 .all(|c| matches!(c, Cmd::Validate { target: 2, .. }))
         );
         assert!(app.entries.iter().all(|e| !e.validations.contains_key(&1)));
+    }
+
+    fn connected_msg(attempt: u64, target: TargetId, host_name: &str) -> Msg {
+        Msg::Connected {
+            attempt,
+            target,
+            dest: Dest::parse(host_name, "").expect("dest"),
+            info: RemoteInfo {
+                os: "Rocky Linux 9.4".into(),
+                privilege: "root via sudo".into(),
+                ..RemoteInfo::default()
+            },
+            host: host(Privilege::Root, Lockdown::None),
+            bpftrace: bpftrace(),
+        }
+    }
+
+    fn fail(app: &mut App, attempt: u64, text: &str) {
+        app.update(Msg::ConnectCheck {
+            attempt,
+            check: Check {
+                status: CheckStatus::Fail,
+                text: text.into(),
+            },
+        });
+        app.update(Msg::ConnectFailed {
+            attempt,
+            reason: None,
+        });
+    }
+
+    #[test]
+    fn several_hosts_connect_in_parallel() {
+        let mut app = ready();
+        press(&mut app, KeyCode::Char('c'));
+        type_text(&mut app, "db-0{1..3}");
+        assert_eq!(form(&app).host_count(), Some(3));
+        let cmds = press(&mut app, KeyCode::Enter);
+        let started: Vec<(u64, TargetId, String)> = cmds
+            .iter()
+            .map(|c| match c {
+                Cmd::Connect {
+                    attempt,
+                    target,
+                    dest,
+                    interactive: false,
+                    ..
+                } => (*attempt, *target, dest.label()),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            started,
+            vec![
+                (1, 1, "db-01".into()),
+                (2, 2, "db-02".into()),
+                (3, 3, "db-03".into())
+            ]
+        );
+
+        // db-02 connects first and becomes the active tab; db-03 connects without taking it.
+        app.update(connected_msg(2, 2, "db-02"));
+        assert_eq!(app.target().label, "db-02");
+        assert_eq!(form(&app).phase(), Phase::Checking, "still checking the others");
+        app.update(connected_msg(3, 3, "db-03"));
+        assert_eq!(app.target().label, "db-02");
+        fail(&mut app, 1, "root: sudo needs a password here");
+        let f = form(&app);
+        assert_eq!(f.phase(), Phase::Editing);
+        assert_eq!(f.focus, Field::Sudo);
+        assert!(
+            f.error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("2 of 3 connected")),
+            "{:?}",
+            f.error
+        );
+        assert!(
+            matches!(&f.rows[1].state, RowState::Connected(s) if s == "Rocky Linux 9.4 · 6.1.0-18-amd64 · bpftrace v0.21.2 · root via sudo")
+        );
+        assert_eq!(app.targets.len(), 3);
+
+        // Enter again: only the one that failed is tried (connected hosts are skipped).
+        let cmds = press(&mut app, KeyCode::Enter);
+        assert!(
+            matches!(cmds.as_slice(), [Cmd::Connect { attempt: 4, target: 4, dest, .. }] if dest.label() == "db-01"),
+            "{cmds:?}"
+        );
+        assert_eq!(form(&app).rows.len(), 3, "connected rows stay listed");
+        app.update(connected_msg(4, 4, "db-01"));
+        assert!(app.overlay.is_none(), "all connected: the dialog closes");
+        assert_eq!(app.targets.len(), 4);
+        assert!(
+            app.notice
+                .as_ref()
+                .is_some_and(|n| n.text.starts_with("connected to 3 hosts"))
+        );
+    }
+
+    #[test]
+    fn several_hosts_auth_cancel_and_limits() {
+        let mut app = ready();
+        press(&mut app, KeyCode::Char('c'));
+        type_text(&mut app, "h{1..21}");
+        assert!(press(&mut app, KeyCode::Enter).is_empty());
+        assert!(
+            form(&app)
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("at most 20"))
+        );
+        for _ in 0.."h{1..21}".len() {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_text(&mut app, "a b c");
+        let cmds = press(&mut app, KeyCode::Enter);
+        assert_eq!(cmds.len(), 3);
+        // a and b need interactive auth, c is still checking: Enter does nothing yet.
+        for attempt in [1, 2] {
+            app.update(Msg::ConnectNeedsAuth {
+                attempt,
+                message: "Permission denied".into(),
+            });
+        }
+        assert_eq!(form(&app).phase(), Phase::Checking);
+        fail(&mut app, 3, "ssh: Connection refused");
+        assert!(matches!(form(&app).phase(), Phase::NeedsAuth(_)));
+        // Enter: a and b in the terminal, one after the other; c is not retried by this.
+        let cmds = press(&mut app, KeyCode::Enter);
+        let terminal: Vec<(u64, TargetId, bool)> = cmds
+            .iter()
+            .map(|c| match c {
+                Cmd::Connect {
+                    attempt,
+                    target,
+                    interactive,
+                    ..
+                } => (*attempt, *target, *interactive),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(terminal, vec![(4, 1, true), (5, 2, true)]);
+        // Esc while they are checking cancels both.
+        assert_eq!(
+            press(&mut app, KeyCode::Esc),
+            vec![
+                Cmd::CancelConnect { attempt: 4 },
+                Cmd::CancelConnect { attempt: 5 }
+            ]
+        );
+
+        // Hosts that are connected already are skipped; all of them: an error.
+        let mut app = ready();
+        connect(&mut app, "db-01");
+        press(&mut app, KeyCode::Char('c'));
+        type_text(&mut app, "db-01 db-02");
+        let cmds = press(&mut app, KeyCode::Enter);
+        assert!(matches!(cmds.as_slice(), [Cmd::Connect { dest, .. }] if dest.label() == "db-02"));
     }
 
     #[test]

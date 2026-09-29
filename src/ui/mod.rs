@@ -369,6 +369,46 @@ mod tests {
     }
 
     #[test]
+    fn connect_several_hosts_120x40() {
+        use crate::remote::connect::{Check, CheckStatus};
+        let mut app = ready();
+        keys(&mut app, &[KeyCode::Char('c')]);
+        type_text(&mut app, "db-0{1..4}");
+        keys(&mut app, &[KeyCode::Enter]);
+        let check = |status, text: &str| Check {
+            status,
+            text: text.into(),
+        };
+        app.update(Msg::ConnectCheck {
+            attempt: 4,
+            check: check(CheckStatus::Ok, "ssh: connected as ops · 90 ms"),
+        });
+        for (attempt, target) in [(1, 1), (2, 2)] {
+            app.update(Msg::Connected {
+                attempt,
+                target,
+                dest: crate::remote::Dest::parse(&format!("db-0{attempt}"), "").expect("dest"),
+                info: crate::remote::facts::RemoteInfo {
+                    os: "Rocky Linux 9.4".into(),
+                    privilege: "root via sudo".into(),
+                    ..Default::default()
+                },
+                host: host(Privilege::Root, Lockdown::None),
+                bpftrace: bpftrace(),
+            });
+        }
+        app.update(Msg::ConnectCheck {
+            attempt: 3,
+            check: check(CheckStatus::Fail, "root: sudo needs a password here"),
+        });
+        app.update(Msg::ConnectFailed {
+            attempt: 3,
+            reason: None,
+        });
+        insta::assert_snapshot!(render(&app, 120, 40));
+    }
+
+    #[test]
     fn remote_tab_active_120x40() {
         let mut app = ready();
         connect(&mut app, "ops@10.0.3.14");

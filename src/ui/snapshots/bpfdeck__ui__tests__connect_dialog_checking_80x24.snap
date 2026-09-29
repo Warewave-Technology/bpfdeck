@@ -1,6 +1,6 @@
 ---
 source: src/ui/mod.rs
-assertion_line: 258
+assertion_line: 272
 expression: "render(&app, 80, 24)"
 ---
 "╭ Scripts (8) ─────────────╮╭ 1 Info │ 2 Source │ 3 Validation ────────────────╮"
@@ -8,7 +8,7 @@ expression: "render(&app, 80, 24)"
 "│▾ net/  1                 ││                                                  │"
 "│  ● tcpconnect_demo  Print││Status   ✗ cannot run here: stdin:1:1-44: ERROR:  │"
 "│●╭ Connect to a host ───────────────────────────────────────────────────────╮ │"
-"│●│  Host      ops@10.0.3.14  IP, hostname, user@host or ~/.ssh/config alias │ │"
+"│●│  Host      ops@10.0.3.14                                                 │ │"
 "│…│  Port      default                                                       │ │"
 "│●│  sudo      (•) automatic   ( ) root login   ( ) sudo with password       │ │"
 "│!│  bpftrace  found in root's PATH                                          │ │"

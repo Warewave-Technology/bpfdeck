@@ -36,7 +36,8 @@ CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld \
 ```
 
 ## Remote hosts
-Press `c` in the TUI, type a host (`10.0.3.14`, `ops@db-02`, or an `~/.ssh/config` alias),
+Press `c` in the TUI, type a host (`10.0.3.14`, `ops@db-02`, or an `~/.ssh/config` alias;
+several at once: `db-01 db-02` or `db-0{1..4}`),
 pick how to become root (automatic: root login or `sudo -n`; root login; sudo with a
 password), `Enter`. bpfdeck checks SSH, root, bpftrace and the kernel, opens a results tab
 for the host and validates every script there. From then on `Enter` runs the script on

@@ -8,11 +8,14 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
 
 use super::theme::Theme;
-use crate::app::{App, Ask, Confirm, ConnectField, ConnectForm, ConnectPhase, SudoMode, ValidationState};
+use crate::app::{
+    App, Ask, Confirm, ConnectField, ConnectForm, ConnectPhase, ConnectRowState as RowState, SudoMode,
+    ValidationState,
+};
 use crate::bpftrace::command;
 use crate::bpftrace::validate::Verdict;
 use crate::model::form::{FieldKind, ParamForm};
-use crate::remote::connect::CheckStatus;
+use crate::remote::connect::{Check, CheckStatus};
 use crate::sys::Privilege;
 
 const LABEL: usize = 10;
@@ -251,7 +254,9 @@ pub fn draw_ask(frame: &mut Frame, area: Rect, ask: &Ask) {
 }
 
 pub fn draw_connect(frame: &mut Frame, area: Rect, form: &ConnectForm) {
-    let editing = form.phase != ConnectPhase::Checking;
+    let phase = form.phase();
+    let editing = phase != ConnectPhase::Checking;
+    let several = form.rows.len() > 1 || form.host_count().is_some_and(|n| n > 1);
     let row = |field: ConnectField, label: &str, value: Vec<Span<'static>>, help: &str| {
         let focused = editing && form.focus == field;
         let mut spans = vec![
@@ -297,7 +302,13 @@ pub fn draw_connect(frame: &mut Frame, area: Rect, form: &ConnectForm) {
             ConnectField::Host,
             "Host",
             text(ConnectField::Host, form.host.clone(), ""),
-            "IP, hostname, user@host or ~/.ssh/config alias",
+            &match form.host_count() {
+                Some(n) if n > 1 => format!("{n} hosts"),
+                _ if form.host.is_empty() => {
+                    "IP, name, user@host or ssh alias; several: a b, db-0{1..4}".into()
+                }
+                _ => String::new(),
+            },
         ),
         row(
             ConnectField::Port,
@@ -326,17 +337,14 @@ pub fn draw_connect(frame: &mut Frame, area: Rect, form: &ConnectForm) {
         "",
     ));
 
-    if !form.checks.is_empty() || form.phase == ConnectPhase::Checking {
-        lines.push(Line::raw(""));
-    }
-    for check in &form.checks {
+    let check_line = |check: &Check, indent: &str| {
         let (glyph, style) = match check.status {
             CheckStatus::Ok => ("✓", Theme::ok()),
             CheckStatus::Warn => ("!", Theme::warn()),
             CheckStatus::Fail => ("✗", Theme::error()),
         };
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {glyph} "), style),
+        Line::from(vec![
+            Span::styled(format!("{indent}{glyph} "), style),
             Span::styled(
                 check.text.clone(),
                 if check.status == CheckStatus::Fail {
@@ -345,7 +353,48 @@ pub fn draw_connect(frame: &mut Frame, area: Rect, form: &ConnectForm) {
                     Theme::base()
                 },
             ),
-        ]));
+        ])
+    };
+    if !form.rows.is_empty() {
+        lines.push(Line::raw(""));
+    }
+    match form.rows.as_slice() {
+        // One host: every check as it finishes.
+        [row] => {
+            lines.extend(row.checks.iter().map(|c| check_line(c, "  ")));
+            if row.state == RowState::Checking {
+                lines.push(Line::styled("  … checking", Theme::running()));
+            }
+        }
+        // Several hosts: one line each (docs/design-fleet.md).
+        rows => {
+            let width = rows.iter().map(|r| r.label().chars().count()).max().unwrap_or(0);
+            for r in rows {
+                let (glyph, style, text, text_style) = match &r.state {
+                    RowState::Checking => (
+                        "…",
+                        Theme::running(),
+                        r.checks.last().map_or("connecting".into(), |c| c.text.clone()),
+                        Theme::muted(),
+                    ),
+                    RowState::Connected(summary) => ("✓", Theme::ok(), summary.clone(), Theme::base()),
+                    RowState::Failed => (
+                        "✗",
+                        Theme::error(),
+                        r.failure().map_or("failed".into(), |c| c.text.clone()),
+                        Theme::error(),
+                    ),
+                    RowState::NeedsAuth(m) => {
+                        ("!", Theme::warn(), format!("ssh needs you: {m}"), Theme::warn())
+                    }
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {glyph} "), style),
+                    Span::styled(format!("{:<width$}  ", r.label()), Theme::title()),
+                    Span::styled(text, text_style),
+                ]));
+            }
+        }
     }
     let hint = |pairs: &[(&str, &str)]| {
         let mut spans = vec![Span::raw("  ")];
@@ -358,28 +407,48 @@ pub fn draw_connect(frame: &mut Frame, area: Rect, form: &ConnectForm) {
         }
         Line::from(spans)
     };
-    match &form.phase {
+    let connected = form
+        .rows
+        .iter()
+        .filter(|r| matches!(r.state, RowState::Connected(_)))
+        .count();
+    let close = if connected > 0 {
+        "close (connected hosts stay)"
+    } else {
+        "cancel"
+    };
+    match &phase {
         ConnectPhase::Checking => {
-            lines.push(Line::styled("  … checking", Theme::running()));
             lines.push(Line::raw(""));
-            lines.push(hint(&[("Esc", "cancel")]));
+            lines.push(hint(&[("Esc", close)]));
         }
         ConnectPhase::NeedsAuth(message) => {
+            let waiting = form
+                .rows
+                .iter()
+                .filter(|r| matches!(r.state, RowState::NeedsAuth(_)))
+                .count();
             lines.push(Line::raw(""));
-            lines.push(Line::styled(
-                format!("  ! ssh needs you: {message}"),
-                Theme::warn(),
-            ));
+            if form.rows.len() == 1 {
+                lines.push(Line::styled(
+                    format!("  ! ssh needs you: {message}"),
+                    Theme::warn(),
+                ));
+            } else {
+                lines.push(Line::styled(
+                    format!(
+                        "  ! ssh needs you for {waiting} of these hosts; they are done one after the other"
+                    ),
+                    Theme::warn(),
+                ));
+            }
             lines.push(Line::styled(
                 "    bpfdeck suspends and runs ssh in the terminal, where it can ask for a \
                  passphrase, password or host key; bpfdeck never sees them.",
                 Theme::muted(),
             ));
             lines.push(Line::raw(""));
-            lines.push(hint(&[
-                ("Enter", "authenticate in the terminal"),
-                ("Esc", "cancel"),
-            ]));
+            lines.push(hint(&[("Enter", "authenticate in the terminal"), ("Esc", close)]));
         }
         ConnectPhase::Editing => {
             if let Some(e) = &form.error {
@@ -387,12 +456,18 @@ pub fn draw_connect(frame: &mut Frame, area: Rect, form: &ConnectForm) {
                 lines.push(Line::styled(format!("  {e}"), Theme::error()));
             }
             lines.push(Line::raw(""));
+            let retry = form.rows.iter().any(|r| r.state == RowState::Failed);
             lines.push(hint(&[
-                ("Enter", "connect"),
+                ("Enter", if retry { "try again" } else { "connect" }),
                 ("Tab", "next field"),
-                ("Esc", "cancel"),
+                ("Esc", close),
             ]));
         }
     }
-    popup(frame, area, " Connect to a host ".into(), lines, 96);
+    let title = if several {
+        " Connect to hosts "
+    } else {
+        " Connect to a host "
+    };
+    popup(frame, area, title.into(), lines, 110);
 }

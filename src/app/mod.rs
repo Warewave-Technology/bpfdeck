@@ -21,7 +21,9 @@ use crate::model::run_state::Run;
 use crate::msg::{Cmd, Msg};
 use crate::source::{Origin, ResolvedSource, SourceSpec};
 use crate::sys::SystemInfo;
-pub use connect::{ConnectForm, Field as ConnectField, Phase as ConnectPhase, SudoMode};
+pub use connect::{
+    ConnectForm, Field as ConnectField, Phase as ConnectPhase, RowState as ConnectRowState, SudoMode,
+};
 pub use edit::{Draft, Editor};
 use filter::Fuzzy;
 pub use run::{Ask, Confirm, LogView};

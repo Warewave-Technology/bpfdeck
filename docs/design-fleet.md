@@ -1,6 +1,8 @@
 # Fleet mode: one script on several targets — design proposal
 
-**Status: approved as proposed (D-024, 2026-09-29); implementation starts with F1.**
+**Status: approved as proposed (D-024, 2026-09-29). F1 done.** One change in F1: a failed
+row shows its failing check inline instead of opening with `o` (letters are typed into
+the host field, and the failing check is the part that matters).
 Builds on the remote targets (docs/design-remote.md, D-020…D-023). Questions are at the end.
 
 ## Goal
